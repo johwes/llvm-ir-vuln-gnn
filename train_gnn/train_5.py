@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""
+train_5.py — Train GNN on instruction-level IR graphs (experiment 5).
+
+Requires preprocess_5.py to have been run first (data/*_instr_graphs.pkl).
+Architecture is identical to train.py (RGCNConv + AttentionalAggregation)
+but with N_FEATURES=32 and loading from the instruction-level pkl files.
+
+Usage:
+    python train_5.py                        # full dataset
+    python train_5.py --epochs 10            # quick sanity check
+    python train_5.py --hidden 128           # larger model
+    python train_5.py --checkpoint instr.pt  # save path
+"""
+
+import argparse
+import pickle
+import sys
+from pathlib import Path
+
+import torch
+import torch.nn.functional as F
+from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader
+from torch_geometric.nn import RGCNConv
+from torch_geometric.nn.aggr import AttentionalAggregation
+
+HERE = Path(__file__).parent
+DATA = HERE / "data"
+
+N_FEATURES = 32   # must match preprocess_5.py
+
+
+# ---------------------------------------------------------------------------
+# Model (same architecture as train.py — only N_FEATURES changes)
+# ---------------------------------------------------------------------------
+
+class DefectGNN(torch.nn.Module):
+    """Two-layer RGCNConv → AttentionalAggregation → binary classifier.
+
+    Edge types: 0=CFG, 1=DFG.  MLP gate captures non-linear feature
+    interactions (e.g. has_call AND icmp_unsigned → likely bounds check path).
+    """
+
+    def __init__(self, in_features: int = N_FEATURES, hidden: int = 64):
+        super().__init__()
+        self.conv1 = RGCNConv(in_features, hidden, num_relations=2)
+        self.conv2 = RGCNConv(hidden, hidden, num_relations=2)
+        gate_nn    = torch.nn.Sequential(
+            torch.nn.Linear(hidden, hidden // 2),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(0.3),
+            torch.nn.Linear(hidden // 2, 1),
+        )
+        self.pool  = AttentionalAggregation(gate_nn=gate_nn)
+        self.lin   = torch.nn.Linear(hidden, 1)
+
+    def forward(self, x, edge_index, edge_type, batch):
+        x = F.relu(self.conv1(x, edge_index, edge_type))
+        x = F.dropout(x, p=0.3, training=self.training)
+        x = F.relu(self.conv2(x, edge_index, edge_type))
+        x = self.pool(x, batch)
+        return self.lin(x).squeeze(-1)
+
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
+
+def load_graphs(pkl_path: Path) -> list[Data]:
+    with open(pkl_path, "rb") as f:
+        raw = pickle.load(f)
+
+    dataset = []
+    for g in raw:
+        x          = torch.tensor(g["x"],         dtype=torch.float)
+        edge_index = torch.tensor(g["edge_index"], dtype=torch.long)
+        edge_type  = torch.tensor(g["edge_type"],  dtype=torch.long)
+        y          = torch.tensor([g["y"]],        dtype=torch.float)
+
+        if x.shape[0] > 1:
+            x = (x - x.mean(0)) / (x.std(0) + 1e-8)
+
+        dataset.append(Data(x=x, edge_index=edge_index, edge_type=edge_type, y=y))
+
+    return dataset
+
+
+# ---------------------------------------------------------------------------
+# Training / evaluation
+# ---------------------------------------------------------------------------
+
+def train_epoch(model, loader, optimizer, device, pos_weight=None):
+    model.train()
+    total_loss = 0.0
+    for batch in loader:
+        batch = batch.to(device)
+        optimizer.zero_grad()
+        logits = model(batch.x, batch.edge_index, batch.edge_type, batch.batch)
+        loss   = F.binary_cross_entropy_with_logits(
+                     logits, batch.y.squeeze(), pos_weight=pos_weight)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item() * batch.num_graphs
+    return total_loss / len(loader.dataset)
+
+
+@torch.no_grad()
+def evaluate(model, loader, device):
+    model.eval()
+    correct = total = 0
+    for batch in loader:
+        batch  = batch.to(device)
+        logits = model(batch.x, batch.edge_index, batch.edge_type, batch.batch)
+        preds  = (logits > 0).long()
+        labels = batch.y.squeeze().long()
+        correct += (preds == labels).sum().item()
+        total   += batch.num_graphs
+    return correct / total if total > 0 else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--epochs",     type=int,   default=30)
+    ap.add_argument("--hidden",     type=int,   default=64)
+    ap.add_argument("--lr",         type=float, default=1e-3)
+    ap.add_argument("--batch-size", type=int,   default=32)
+    ap.add_argument("--checkpoint", type=str,   default="model_instr.pt")
+    args = ap.parse_args()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"\nDevice: {device}")
+
+    for split in ["train", "valid", "test"]:
+        if not (DATA / f"{split}_instr_graphs.pkl").exists():
+            print(f"Missing data/{split}_instr_graphs.pkl — run preprocess_5.py first.")
+            sys.exit(1)
+
+    print("Loading graphs ...")
+    train_data = load_graphs(DATA / "train_instr_graphs.pkl")
+    valid_data = load_graphs(DATA / "valid_instr_graphs.pkl")
+    test_data  = load_graphs(DATA / "test_instr_graphs.pkl")
+    print(f"  train={len(train_data)}  valid={len(valid_data)}  test={len(test_data)}")
+
+    vuln_train  = sum(1 for d in train_data if d.y.item() == 1)
+    fixed_train = len(train_data) - vuln_train
+    pos_weight  = torch.tensor([fixed_train / vuln_train]).to(device)
+    print(f"  train class balance: {vuln_train} vuln / {fixed_train} fixed")
+    print(f"  pos_weight: {pos_weight.item():.3f}\n")
+
+    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_data, batch_size=args.batch_size)
+    test_loader  = DataLoader(test_data,  batch_size=args.batch_size)
+
+    model     = DefectGNN(in_features=N_FEATURES, hidden=args.hidden).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"Model: DefectGNN-instr(in={N_FEATURES}, hidden={args.hidden}, relations=2)  "
+          f"params={n_params:,}\n")
+
+    best_val_acc = 0.0
+    checkpoint   = Path(args.checkpoint)
+
+    print(f"{'Epoch':>5}  {'Loss':>8}  {'Val Acc':>8}  {'':>6}")
+    print("-" * 35)
+
+    for epoch in range(1, args.epochs + 1):
+        loss    = train_epoch(model, train_loader, optimizer, device, pos_weight)
+        val_acc = evaluate(model, valid_loader, device)
+        scheduler.step()
+
+        marker = ""
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            torch.save(model.state_dict(), checkpoint)
+            marker = "← best"
+
+        print(f"{epoch:>5}  {loss:>8.4f}  {val_acc:>8.2%}  {marker}")
+
+    print(f"\nLoading best checkpoint ({checkpoint}) ...")
+    model.load_state_dict(torch.load(checkpoint, map_location=device))
+    test_acc = evaluate(model, test_loader, device)
+    print(f"Test accuracy: {test_acc:.2%}")
+    print(f"Checkpoint saved to: {checkpoint.resolve()}\n")
+
+    print(f"--- Comparison ---")
+    print(f"  Block-level GNN best (4d):  57.84%")
+    print(f"  CodeBERT (4a):              63.43%")
+    print(f"  Instruction-level GNN (5):  {test_acc:.2%}")
+
+    if test_acc >= 0.62:
+        print("✓ Closes the granularity gap — instruction order information is load-bearing")
+    elif test_acc >= 0.58:
+        print("— Improvement over block-level but gap remains; try more epochs or larger hidden")
+    else:
+        print("— No improvement; instruction-level features may need richer encodings")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,21 @@
+# Large raw data — regenerate with preprocess.py / preprocess_bigvul.py
+data/*.pkl
+data/*.jsonl
+data/*.json
+data/*.csv
+
+# CodeBERT base model (not our artifact, 476 MB)
+codebert_model.pt
+
+# Closed experiment checkpoints
+encoder_contrastive.pt
+encoder_triplet.pt
+encoder_instr_triplet.pt
+model_gru.pt
+
+# k-NN corpus dumps (generated from checkpoints)
+corpus_*.npz
+
+# Python cache
+__pycache__/
+*.pyc
