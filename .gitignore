@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model checkpoints — upload to HF, not git
+train_gnn/*.pt
+train_gnn/corpus_*.npz
+
+# Data — large files, regenerate locally
+train_gnn/data/*.pkl
+train_gnn/data/*.jsonl
+train_gnn/data/*.json
+train_gnn/data/*.csv
