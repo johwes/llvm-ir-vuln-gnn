@@ -186,3 +186,35 @@ python train_instr_focal.py --epochs 50 --hidden 64 --tau 0.07 --gamma 2.0
 clang -O0 -fno-inline -S -emit-llvm -o /tmp/target.ll target.c
 python scan_ir.py /tmp/target.ll
 ```
+---
+
+## Evaluating on real codebases
+
+Two scripts score the model against known-vulnerable real C code, requiring only
+`clang` in PATH and `model.pt` present in `train_gnn/`.
+
+### `eval_scar_test_c.sh` — scar-test-c (CWE benchmark)
+
+Clones [johwes/scar-test-c](https://github.com/johwes/scar-test-c), compiles
+7 known-vulnerable files (double-free, null-deref, OOB read, uninit, div-zero,
+stack overflow, signed overflow) plus one clean synthetic function, and checks
+whether the model predicts each correctly.
+
+```bash
+bash eval_scar_test_c.sh
+bash eval_scar_test_c.sh --model /path/to/other.pt
+```
+
+### `eval_scarnet.sh` — scarnet (planted-bug server)
+
+Clones [johwes/scarnet](https://github.com/johwes/scarnet), compiles all source
+files, scores every function with `scan_ir.py --all-functions`, and ranks them
+by vulnerability score. Cross-references the ranked list against 13 known-vulnerable
+functions to report how many land in the top-13.
+
+```bash
+bash eval_scarnet.sh
+bash eval_scarnet.sh --model /path/to/other.pt
+```
+
+Both scripts clone into a temp directory and clean up after themselves.
