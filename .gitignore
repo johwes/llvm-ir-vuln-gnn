@@ -16,3 +16,4 @@ train_gnn/data/*.pkl
 train_gnn/data/*.jsonl
 train_gnn/data/*.json
 train_gnn/data/*.csv
+train_gnn/data/*.zip
