@@ -3,7 +3,7 @@
 Research into whether LLVM IR graph structure alone can classify vulnerable C functions,
 without access to source identifiers, type names, or string literals.
 
-Full experimental record: **[docs/experiments/ir-embed.md](../../docs/experiments/ir-embed.md)**
+Full experimental record: **[docs/ir-embed.md](docs/ir-embed.md)**
 
 ---
 
@@ -30,6 +30,10 @@ Full GNN training pipeline. Each script corresponds to one experiment series:
 | `train.py` | Block-level GCN/RGCN classifier | Devign |
 | `preprocess_instr.py` | Instruction-level graph extraction | Devign |
 | `train_instr.py` | Instruction-level GNN classifier (§7, §10a) | Devign |
+| `preprocess_slice.py` | DFG backward-slice graph extraction (§11) | Devign |
+| `train_slice.py` | DFG slice GNN classifier (§11) | Devign |
+| `preprocess_slice_pdg.py` | PDG slice graph extraction (§12) | Devign |
+| `train_slice_pdg.py` | PDG slice GNN classifier (§12) | Devign |
 | `preprocess_bigvul.py` | Block-level pair extraction | BigVul |
 | `train_triplet.py` | Block-level triplet contrastive (§6) | BigVul |
 | `preprocess_instr_bigvul.py` | Instruction-level pair extraction | BigVul |
@@ -55,12 +59,18 @@ instructions (`hf_upload.py`).
 | Instruction-level GNN (§7) | 58.00% | first to clear block ceiling |
 | BigVul block-level triplet k-NN (§6) | 51.21% | soft collapse, pair-sim ↑ |
 | BigVul instr-level triplet k-NN (§8) | 48.39% | soft collapse, pair-sim 0.9984→0.9995 ↑ |
-| **§10a: enriched vocab classifier** | pending | icmp/fcmp predicate IDs 80-109 |
-| **§10b: FCL + SAGPooling** | pending | focal contrastive + SAGPooling |
+| §10a: enriched vocab classifier | 56.85% | below §7 — vocab enrichment insufficient alone |
+| §10b: FCL + SAGPooling | 47.58% k-NN | collapse (pair-sim 0.9992 ↑); contrastive branch closed |
+| §11: DFG backward-slice GNN (30ep, h=64) | 56.64% | DFG slice misses guard conditions |
+| §12: PDG slice GNN (30ep, h=64) | 56.48% | control deps added; no accuracy gain over §11 |
 
-**Best deployed model:** `model.pt` (block-level, 57.84%) — used by `scan_ir.py`.
-Instruction-level model (58.00%) validated but not deployed (+0.16% does not
-justify infrastructure change).
+**GNN structural ceiling: ~57–58%** across all 12 experiments. Every architectural variant —
+relational edges, semantic features, slice graphs, contrastive objectives — converges to the
+same range. Closing the ~5.6pp gap to CodeBERT requires identifier-augmented features or
+LLM pretraining on source tokens.
+
+**Deployed models:** See `train_gnn/MODEL_CARD.md` for all four checkpoints on HuggingFace
+(`model.pt`, `model_instr.pt`, `model_slice.pt`, `model_slice_pdg.pt`).
 
 **Why CodeBERT wins by +5.6pp:** it sees identifier names and type tokens.
 Our GNN discards all identifiers — only opcode categories survive in LLVM IR graphs.
@@ -69,7 +79,7 @@ Our GNN discards all identifiers — only opcode categories survive in LLVM IR g
 
 ## Reproducing experiments
 
-All commands run from `experiments/ir_embed_demo/train_gnn/`.
+All commands run from `train_gnn/`.
 
 **System dependencies** (clang must be in PATH):
 ```bash
@@ -127,6 +137,20 @@ python preprocess_instr.py
 # §7 / §10a
 python train_instr.py --epochs 30 --hidden 64
 # Saves: model_instr.pt  (58.00% test accuracy)
+```
+
+### Devign experiments (slice GNN classifiers)
+
+```bash
+# §11 — DFG backward-slice GNN
+python preprocess_slice.py
+python train_slice.py --epochs 30 --hidden 64
+# Saves: model_slice.pt  (56.64% test accuracy)
+
+# §12 — PDG slice GNN (DFG + control dependence)
+python preprocess_slice_pdg.py
+python train_slice_pdg.py --epochs 30 --hidden 64
+# Saves: model_slice_pdg.pt  (56.48% test accuracy)
 ```
 
 ### BigVul experiments (block-level contrastive)
