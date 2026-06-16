@@ -2105,3 +2105,163 @@ patch hypothesis space (arXiv 2605.17450).
 
 The LLVM IR GNN work was conceived as a vulnerability classifier. The slice infrastructure
 turns out to be a taint analysis engine that could serve a fuzzing pipeline.
+
+
+---
+
+## Future Directions: Feature Extraction Improvements
+
+The 12 experiments in this series converged at a ~57–58% ceiling on Devign. The gap to
+CodeBERT (+5.6pp) is not architectural — it is representational. Our hand-coded feature
+vocabulary discards identifier names, string literals, and comparison operand values that
+CodeBERT reads from source. The following improvements target that gap without requiring
+LLM pretraining, ranked by expected lift per implementation cost.
+
+---
+
+### Tier 1 — High expected lift, low-to-medium effort
+
+**1. Perfograph constant encoding**
+
+Replace the binary "is this a constant?" flag with `sign(C) * log2(|C| + 1)`. This is a
+three-line change to `preprocess_*.py`. The encoding preserves order and compresses large
+constants gracefully without unbounded values.
+
+Why it matters: buffer overflows, integer overflows, and off-by-one errors are
+overwhelmingly characterized by specific constant magnitudes — small allocation sizes,
+powers of two, UINT_MAX. The current binary flag throws that magnitude information away.
+Expected impact: marginal on Devign (dataset is noisy), potentially meaningful on Scarnet
+where bugs are concrete and constant-dependent.
+
+Reference: Perfograph (Ben-Nun et al. 2022).
+
+---
+
+**2. Categorical call target mapping**
+
+Instead of encoding every `call` edge destination as an opaque node, bucket it into
+a small fixed vocabulary:
+
+```
+{Allocation, Copy, String, File IO, Network, Internal}
+```
+
+| Bucket | Targets |
+|---|---|
+| Allocation | `malloc`, `calloc`, `realloc`, `kmalloc`, `av_malloc`, `g_malloc` |
+| Copy | `memcpy`, `memmove`, `memset` |
+| String | `strcpy`, `strncpy`, `strcat`, `strncat`, `sprintf`, `snprintf`, `gets`, `fgets` |
+| File IO | `fopen`, `fread`, `fwrite`, `fclose`, `read`, `write` |
+| Network | `recv`, `send`, `accept`, `connect` |
+| Internal | everything else |
+
+Our current graph treats `malloc`, `strncpy`, and a helper function as structurally
+identical. A vulnerability detector needs to know when untrusted data flows into a
+string or memory function. This is a vocabulary-lookup change in preprocessing — no
+architecture change required.
+
+This directly addresses one of the clearest failure modes from the Scarnet false
+negatives (`handle_set`: null deref + strncpy, scored 12%).
+
+---
+
+**3. IR2Vec vocabulary replacement**
+
+Replace the 110-dim one-hot opcode vocabulary with IR2Vec's dense compositional
+embeddings. IR2Vec is upstream in LLVM as `IR2VecVocabAnalysis` (LLVM 17+). The
+additive formulation computes a per-instruction vector as:
+
+```
+v(instr) = E[opcode] + E[type] + sum(E[operand_i])
+```
+
+Similar semantic instructions cluster in embedding space without manual grouping.
+This is a principled upgrade over the one-hot/predicate vocabulary developed in §10.
+
+Effort: medium. Requires running `opt -passes=ir2vec-vocab` to extract embeddings per
+instruction, then replacing the `nn.Embedding` lookup in `train_instr.py` with the
+IR2Vec vectors as pre-computed node features.
+
+Expected impact: this is the most principled representation upgrade available while
+remaining entirely at the IR level. It will not close the CodeBERT gap — IR2Vec still
+has no identifier names — but it should shift the ceiling 1–3 points and reduce the
+vocabulary brittleness seen when new opcode patterns appeared in BigVul.
+
+---
+
+### Tier 2 — Meaningful but higher effort or uncertain payoff
+
+**4. SVF alias analysis for PDG edge cleanup**
+
+The PDG constructed in §4c/§11/§12 uses conservative may-alias approximation, producing
+spurious memory dependency edges. SVF (Static Value-Flow Analysis) provides
+context-sensitive, flow-sensitive pointer analysis and can eliminate roughly 25% of false
+positive edges, producing a cleaner graph for GNN message-passing.
+
+Effort: significant. SVF is a separate LLVM pass (C++ tool chain dependency), and its
+output must be consumed in the Python preprocessing pipeline. Do constant encoding and
+call categorization first to determine whether graph noise is actually the binding
+constraint before committing to this.
+
+---
+
+**5. Relative register ID normalization**
+
+Replace `%12`, `%13`, `%14` with `%0`, `%1`, `%2` within each basic block's scope.
+Two identical code patterns with different register numbers currently look different to
+the model because SSA numbering is determined by compilation order, not semantics.
+
+Cost: essentially zero — a preprocessing transformation. Expected effect: reduces
+variance more than lifting the mean, making the model more robust to compilation
+artifacts that change register numbering without changing meaning.
+
+---
+
+### Tier 3 — Research-grade, likely not worth the cost for this project
+
+**6. inst2vec / skip-gram pre-training**
+
+Train a skip-gram model on a large LLVM IR corpus to learn opcode co-occurrence
+embeddings. This is the inst2vec approach. Embedding quality depends entirely on corpus
+size and diversity; on a typical academic machine this requires weeks of preprocessing.
+The representation still has no identifier names — the ceiling stays below CodeBERT. The
+engineering cost is high relative to the likely gain over IR2Vec, which already provides
+composable dense embeddings without needing corpus pre-training.
+
+---
+
+**7. Hybrid Graph-Transformer (ProGraML-style)**
+
+Replace RGCNConv with a Graph-Transformer that attends over heterogeneous edges (control,
+data, call). The problem: attention over heterogeneous graphs requires significantly more
+memory and training time, and the Devign ceiling appears limited by the feature vocabulary,
+not the architecture. Adding a powerful architecture on top of weak features mostly
+amplifies noise. If IR2Vec + Perfograph + call categorization push accuracy above 60%,
+revisiting the architecture makes sense — in that order.
+
+---
+
+### The gap to CodeBERT: what it would actually take to close it
+
+CodeBERT's +5.6pp advantage comes from a specific source: identifier names (`buf`, `src`,
+`size`), string literals, and type tokens. None of these appear in any IR2Vec vocabulary,
+any one-hot opcode encoding, or any graph topology at the opcode level. The GNN sees
+structure; CodeBERT sees semantics.
+
+Two paths to close the gap:
+
+1. **LLVM debug metadata** — LLVM IR compiled with `-g` preserves identifier names in
+   `!DIVariable` annotations. These survive `-O1` compilation and could be extracted to
+   augment node features with partial source-level identifier information without
+   requiring full source re-parsing.
+
+2. **Hybrid token-GNN architecture** — Use a pretrained token model (CodeBERT, OSCAR)
+   to generate per-instruction node embeddings, then aggregate over graph structure with
+   the GNN. This is the direction taken by VulChecker-style approaches and would likely
+   match or exceed CodeBERT accuracy. It also removes the need for hand-crafted feature
+   engineering entirely.
+
+**Realistic expectation:** IR2Vec + Perfograph constant encoding + categorical call
+targets implemented together represent a principled rewrite of the feature extraction
+layer with no architecture changes and a plausible path to ~60% on Devign. Everything
+beyond that requires one of the two identifier-augmentation strategies above.
