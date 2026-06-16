@@ -2035,3 +2035,73 @@ nodes would distinguish guarded-safe from unguarded-vulnerable calls. In practic
   `loff_t = __loff_t (aka long)` from `/usr/include/sys/types.h:42`
 - Fix: add `#include <sys/types.h>` to `_PREAMBLE_STATIC`, remove standalone `loff_t` typedef
 
+---
+
+## Future Directions: IR Signal as Fuzzing Context
+
+The §11 and §12 slice experiments were motivated by vulnerability classification, but the
+artifacts they produce are directly reusable for a different purpose: guiding LLM-generated
+fuzzing harnesses.
+
+### The connection
+
+Generating a fuzzing harness for a function requires three things the slice work already
+computes:
+
+**1. Dangerous sink identification**
+
+`preprocess_slice.py` explicitly identifies dangerous sinks — calls to `memcpy`, `strcpy`,
+`malloc`, `free`, pointer dereferences with computed indices — as the starting points for
+backward slice extraction. These sinks are precisely the targets a fuzzer should try to reach.
+Rather than asking the LLM to guess what to exercise, the sink list tells it directly.
+
+**2. Backward data flow from inputs to sinks**
+
+The backward DFG slice from a sink traces which variables flow into the sink's arguments and
+where they originate. This is the taint path a harness needs to exercise. For example, if
+`memcpy(dst, src, len)` has a backward slice showing `len` derives from a network read four
+assignments upstream, the harness should make that input fuzzable and test values at
+arithmetic boundaries.
+
+**3. GNN vulnerability score as prioritization**
+
+`scan_ir.py` scores functions by structural vulnerability likelihood. Used alongside Fuzz
+Introspector's reachability metric, the GNN score adds a dimension that reachability alone
+misses: "does this function look structurally vulnerable, not just reachable?" High reachability
+AND high GNN score identifies the highest-value harness targets.
+
+### What this would look like in practice
+
+The IR signal becomes an additional section of the context payload sent to the harness-
+generating LLM:
+
+```json
+"ir_signal": {
+    "gnn_vulnerability_score": 0.82,
+    "dangerous_sinks": [
+        {"call": "memcpy", "line": 47},
+        {"call": "malloc", "line": 31}
+    ],
+    "sink_input_variables": ["len (derives from network read)", "src (user buffer)"],
+    "backward_slice_depth": 4,
+    "dominant_comparison_predicates": ["slt", "sle"]
+}
+```
+
+The dominant comparison predicates (from the §10 VOCAB_SIZE=110 vocabulary) indicate what
+kind of boundary conditions the function checks — `icmp slt` and `icmp sle` mean the function
+is performing upper-bound checks, so the fuzzer should probe values at and just above those
+boundaries.
+
+### Why this matters
+
+Unconstrained LLM harness generation has a high error rate — empirically up to 94% in
+rudimentary setups (HarnessAgent, arXiv 2512.03420) — because the LLM hallucates API
+contracts and misses which inputs actually reach the dangerous operations. The backward
+slice provides a ground-truth data flow path from input to sink, and the GNN score provides
+a confidence signal that the sink is worth targeting. Together they constrain the LLM's
+hypothesis space in the same way ContraFix's differential runtime evidence constrains the
+patch hypothesis space (arXiv 2605.17450).
+
+The LLVM IR GNN work was conceived as a vulnerability classifier. The slice infrastructure
+turns out to be a taint analysis engine that could serve a fuzzing pipeline.
