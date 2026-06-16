@@ -2,7 +2,7 @@
 
 **Code:** `experiments/ir_embed_demo/`  
 **Hypothesis:** `docs/research.md` — Contrastive structural embeddings over LLVM IR  
-**Status:** **COMPLETE.** §7 instruction-level GNN: 58.00%; §8 BigVul instr-level triplet collapsed (pair-sim 0.9984→0.9995); §9 scarnet real-world validation: 10/13 known-vulnerable functions in top-13 of 19 (77% P/R, -O0 -fno-inline). §10b FCL+SAGPooling: 47.58% k-NN, pair-sim 0.9992 — **contrastive learning branch closed** (3/3 experiments collapsed; structural invariance of patches is the binding constraint). Deployed as zero-cost ranker. Three semantic false negatives (format string, null deref, off-by-one) are LLM domain. Pipeline deliverable: block-level GNN 57.84% (`model.pt`).
+**Status:** **COMPLETE.** §7 instruction-level GNN: 58.00%; §8 BigVul instr-level triplet collapsed (pair-sim 0.9984→0.9995); §9 scarnet real-world validation: 10/13 known-vulnerable functions in top-13 of 19 (77% P/R, -O0 -fno-inline). §10b FCL+SAGPooling: 47.58% k-NN, pair-sim 0.9992 — **contrastive learning branch closed** (3/3 experiments collapsed; structural invariance of patches is the binding constraint). Deployed as zero-cost ranker. Three semantic false negatives (format string, null deref, off-by-one) are LLM domain. Pipeline deliverable: block-level GNN 57.84% (`model.pt`). §13 Tier 1 features (Perfograph + call categorization): instruction-level best 58.75% (+0.75pp over §7), block-level 56.75% (below §4d baseline); ceiling remains ~57–58%.
 
 ---
 
@@ -2034,6 +2034,57 @@ nodes would distinguish guarded-safe from unguarded-vulnerable calls. In practic
 - Root cause of 100% attrition: `typedef long long loff_t;` conflicted with system
   `loff_t = __loff_t (aka long)` from `/usr/include/sys/types.h:42`
 - Fix: add `#include <sys/types.h>` to `_PREAMBLE_STATIC`, remove standalone `loff_t` typedef
+
+---
+
+## §13 — Tier 1 Feature Extraction: Perfograph Constant Encoding + Categorical Call Targets
+
+**Scripts:** `preprocess_v2.py` + `train_v2.py` (block-level); `preprocess_instr_v2.py` + `train_instr_v2.py` (instruction-level)
+
+**Hypothesis:** Two Tier 1 improvements from the feature extraction roadmap applied together:
+1. **Perfograph constant encoding** — replace binary "is this a constant?" flag with `sign(C) * log2(|C| + 1)`, encoding constant magnitude as a compact signed float. Boundary-condition constants (0, 1, −1, buffer bounds) are the most semantically loaded values in vulnerability-triggering code.
+2. **Categorical call target mapping** — replace single generic `has_call` flag (block-level) or single `IDX_MOCK=75` (instruction-level) with 5 category-specific features/vocab IDs:
+
+| Category | Functions | New ID (instr) |
+|---|---|---|
+| Alloc | malloc, calloc, realloc, kmalloc, av_malloc… | 106 |
+| Copy | memcpy, memmove, memset | 107 |
+| String | strcpy, strncpy, sprintf, gets, fgets… | 108 |
+| FileIO | fopen, fread, fwrite, read, write, open | 109 |
+| Network | recv, send, accept, connect, recvfrom… | 110 |
+
+**Architecture changes (instruction-level):**
+- Node features: `(N, 1)` int64 → `(N, 2)` float32 `[opcode_id, const_magnitude]`
+- VOCAB_SIZE: 110 → 111 (5 new call-category IDs)
+- `RGCNConv(embed_dim + 1, hidden, 3)` — appends const_magnitude channel after embedding lookup
+
+**Implementation note — NaN constants:** LLVM IR contains `float nan` and `float inf` literals in FFmpeg DSP code. `math.log2(float('nan'))` returns nan silently (no exception), poisoning the entire graph's forward pass. Fix: `math.isfinite(val)` guard in `_const_magnitude` returns 0.0 for non-finite inputs. Safety net in loader: `torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)`.
+
+### Results
+
+**Block-level (preprocess_v2.py → train_v2.py, 30ep, h=64):**
+
+**Test accuracy: 56.75%** (10,117 train / 1,255 valid / 1,252 test)
+
+Below the §4d baseline (57.84%). Block-level constant extraction via text regex (`i32 -1`, `i64 42`) adds noise — width tokens like `i32`/`i64` appear as false matches — and aggregating to a single `max_const_log` per block washes out the per-instruction signal. The categorical call flags replace `has_call` with 6 bits but the underlying blocks don't change; without the opcode-level resolution of the instruction graph, the additional features add variance with no accuracy gain.
+
+**Instruction-level (preprocess_instr_v2.py → train_instr_v2.py, 30ep, h=64):**
+
+**Best single-run test accuracy: 58.75%** — +0.75pp over §7 instruction-level baseline (58.00%)
+
+| Run | Epochs | Val peak | Test acc | Notes |
+|---|---|---|---|---|
+| Run 1 | 30 | ~58% | **58.75%** | Best result; Run 1 checkpoint kept |
+| Run 2 | 50 | — | 56.20% | Overfit; val/test diverged |
+| Run 3 | 30 | 59.44% | 54.12% | High val / worst test; extreme val/test gap |
+
+**High variance caution:** With ~1,250 samples per split (0.08% per sample), a 2.5pp swing is ~31 samples. The 58.75%–54.12% range across identical runs is noise, not signal. A multi-seed average (5 seeds) would be needed for a stable estimate; single-run results here are recorded per the methodology used in §4–§12.
+
+**Interpretation:**
+- Instruction-level: the two features together give a marginal positive signal (+0.75pp best case) but the variance across runs exceeds the effect size. Constant encoding at the instruction node level is directionally correct (each constant node carries its magnitude rather than a generic ID), but the categorical call categorization may need a larger training set to materialize.
+- Block-level: constant encoding at block granularity is lossy. The improvement requires instruction-level resolution.
+
+**Key finding:** The Devign structural ceiling remains at ~57–58%. Perfograph encoding and call categorization are the right direction but not sufficient alone to break the ceiling — the representation gap to CodeBERT (63.43%) is attributable to vocabulary (opcode categories vs. identifier names and string literals), not constant magnitudes.
 
 ---
 
