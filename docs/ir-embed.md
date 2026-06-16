@@ -2316,3 +2316,40 @@ Two paths to close the gap:
 targets implemented together represent a principled rewrite of the feature extraction
 layer with no architecture changes and a plausible path to ~60% on Devign. Everything
 beyond that requires one of the two identifier-augmentation strategies above.
+
+---
+
+## Current Conclusion
+
+13 experiments across block-level, instruction-level, slice-based, contrastive, and feature-enriched GNNs on Devign. Every approach converges at the same ceiling: **~57–58% test accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%.
+
+The 7pp gap to CodeBERT is real and has three distinct causes:
+
+### 1. Vulnerability patterns are often absences, not presences
+
+The most common vulnerability pattern — a missing bounds check, a missing null guard, an unchecked return value — is structurally a *subgraph that isn't there*. A guarded `memcpy` and an unguarded one have nearly identical IR graphs; the only difference is the absent `icmp`/`br` predecessor. RGCN message-passing propagates information along existing edges; a missing subgraph leaves no gradient signal. This was confirmed directly by the §8–§10 contrastive experiments: vuln/fixed pairs have structural similarity 0.9984–0.9995. No feature extraction improvement can signal what is structurally absent.
+
+### 2. LLVM IR has already discarded the most informative content
+
+CodeBERT reads `gets(buf)` and associates it with vulnerability from training on billions of tokens including CVE descriptions, security advisories, and developer commentary. It reads variable names like `size`, `n`, `offset` near `memcpy` and learns that pattern. In LLVM IR at `-O0`, those names become `%0`, `%1`, `%2`. String literals become addresses. The identifier vocabulary that carries most of the human-assigned semantic signal is gone before feature extraction begins. §13 Perfograph encoding and call categorization recovered a small fraction of this (call targets, constant magnitudes) — hence the marginal +0.75pp — but the bulk is structurally unrecoverable from IR alone.
+
+### 3. Devign label noise caps the dataset ceiling
+
+Devign labels are assigned at git-commit granularity to the function that changed. The memory error may manifest in a callee, or the vulnerable condition may be set up two call frames away. The GNN is learning to predict a commit-level label from a single function's IR structure. This mismatch probably caps Devign at ~60–63% for any method, which is precisely where CodeBERT lands.
+
+### What the experiments ruled out
+
+- **Architecture:** block, instruction, slice, PDG slice, contrastive — all hit the same ceiling. Architecture is not the bottleneck.
+- **Edge types:** CFG vs. CFG+DFG (§4c) vs. PDG slice (§12) — marginal differences, no ceiling break.
+- **Loss function:** BCE, weighted BCE, focal contrastive — same result.
+- **Granularity:** basic block vs. individual instruction — marginal improvement (+0.16pp), same ceiling.
+
+### What has not been tried
+
+The one path not closed: **augmenting the GNN input with source-level token features**. A hybrid model that runs CodeBERT on the C source and a GNN on the IR graph, then combines them, would have both structural signal and semantic vocabulary. That's where the next meaningful improvement would come from.
+
+### Practical value for SCAR
+
+The Devign accuracy number (57.84%) understates the model's value in SCAR's pipeline. On SCAR's actual targets — code compiled in full project context via Tekton's `build-bitcode` task — attrition is near zero and the feature distribution better matches real-world vulnerability patterns. The §9 scarnet validation confirmed this: 10/13 known-vulnerable functions ranked in the top 13 of 19 (77% precision/recall) without any fine-tuning on the target codebase.
+
+The GNN's role is not to replace the LLM scanner. It is a **zero-cost structural pre-filter** — one CPU forward pass per function, milliseconds per PR, no LLM tokens spent — that routes structurally suspicious functions to the heavier analysis and bypasses clearly safe code. The 57–58% Devign number is the cost of that filter; the benefit is avoiding LLM calls on the majority of functions that are unambiguously clean.
