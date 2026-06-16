@@ -32,7 +32,7 @@ vulnerability triage pipelines.
 block-level representation and runs fastest at inference. `model_instr.pt` achieves the
 highest Devign accuracy.
 
-### Latest experiments (§13–§14, not yet uploaded)
+### Latest experiments (§13–§15, not yet uploaded)
 
 §13 added Perfograph constant encoding (`sign(C)*log2(|C|+1)`) and categorical call targets
 (5 danger categories: Alloc/Copy/String/FileIO/Network) to the instruction-level model.
@@ -43,6 +43,13 @@ at the ~1,250-sample split scale makes this a noisy improvement over §7's 56.53
 edge, type=3, `num_relations` 3→4). Result: **57.47%** — below §7 baseline. State edges
 add density without benefit at Devign scale; val accuracy peaked lower (56.97% vs 59.44%
 in §13), confirming no improvement. Scripts: `preprocess_instr_v3.py`, `train_instr_v3.py`.
+
+§15 adds register name embedding: at `-O0`, clang preserves source variable names in IR
+register names (`%buf.addr`, `%size`, `%cmp`). FNV-1a hashes them into 64 buckets; a
+learned `nn.Embedding(65, 16)` gives a 16-dim name signal per node (conv1 input: 129→145).
+Result: **57.47%** — identical to §14. Names do not generalize across Devign's four
+codebases; bucket collisions dominate the signal. **IR feature engineering track closed.**
+Scripts: `preprocess_instr_v4.py`, `train_instr_v4.py`.
 
 ## Model Description
 
@@ -133,26 +140,27 @@ decisions. The LLM handles the semantic bugs the GNN misses.
   identical IR topology to correct code and are undetectable.
 - **Block-level granularity** (model.pt): each basic block is one node. Fine for
   function-level ranking; not suitable for pinpointing the exact buggy line.
-- **GNN ceiling ~57–58%:** fourteen experiments across block-level, instruction-level,
-  slice variants, Perfograph constant encoding, categorical call targets, and VSDG memory
-  edges all converged in this range. The ceiling is representational — LLVM IR opcode
-  graphs discard the identifier names and string literals that distinguish vulnerable from
-  safe code. CodeBERT on source text reaches 63.43%. See `docs/ir-embed.md §
+- **GNN ceiling ~57–58%:** fifteen experiments across block-level, instruction-level,
+  slice variants, Perfograph constant encoding, categorical call targets, VSDG memory
+  edges, and register name embedding all converged in this range. The ceiling is
+  representational — LLVM IR opcode graphs discard the identifier names and string
+  literals that distinguish vulnerable from safe code. CodeBERT on source text reaches
+  63.43%. IR feature engineering track is closed. See `docs/ir-embed.md §
   "Current Conclusion"` for the full analysis.
 - **Devign distribution:** trained on C from large open-source projects; may not
   generalise well to embedded, kernel, or heavily macro-expanded code.
 
 ## Repository & Reproducibility
 
-Source code, training scripts, and full experiment log (§1–§14):
+Source code, training scripts, and full experiment log (§1–§15):
 **[johwes/llvm-ir-vuln-gnn](https://github.com/johwes/llvm-ir-vuln-gnn)**
 
 Key files:
 - `train_gnn/train.py` / `train_v2.py` — block-level (§4d / §13)
-- `train_gnn/train_instr.py` / `train_instr_v2.py` / `train_instr_v3.py` — instruction-level (§7 / §13 / §14)
+- `train_gnn/train_instr.py` / `train_instr_v2.py` / `train_instr_v3.py` / `train_instr_v4.py` — instruction-level (§7 / §13 / §14 / §15)
 - `train_gnn/train_slice.py` / `train_slice_pdg.py` — slice variants (§11 / §12)
 - `train_gnn/preprocess.py` / `preprocess_v2.py` — block-level graph extractors
-- `train_gnn/preprocess_instr.py` / `preprocess_instr_v2.py` / `preprocess_instr_v3.py` — instruction-level extractors
+- `train_gnn/preprocess_instr.py` / `preprocess_instr_v2.py` / `preprocess_instr_v3.py` / `preprocess_instr_v4.py` — instruction-level extractors
 - `train_gnn/scan_ir.py` — inference CLI
 - `docs/ir-embed.md` — full experiment log and current conclusion
 

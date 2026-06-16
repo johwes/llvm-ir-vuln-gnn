@@ -2,7 +2,7 @@
 
 **Code:** `experiments/ir_embed_demo/`  
 **Hypothesis:** `docs/research.md` — Contrastive structural embeddings over LLVM IR  
-**Status:** **COMPLETE.** §7 instruction-level GNN: 58.00%; §8 BigVul instr-level triplet collapsed (pair-sim 0.9984→0.9995); §9 scarnet real-world validation: 10/13 known-vulnerable functions in top-13 of 19 (77% P/R, -O0 -fno-inline). §10b FCL+SAGPooling: 47.58% k-NN, pair-sim 0.9992 — **contrastive learning branch closed** (3/3 experiments collapsed; structural invariance of patches is the binding constraint). Deployed as zero-cost ranker. Three semantic false negatives (format string, null deref, off-by-one) are LLM domain. Pipeline deliverable: block-level GNN 57.84% (`model.pt`). §13 Tier 1 features (Perfograph + call categorization): instruction-level best 58.75% (+0.75pp over §7), block-level 56.75% (below §4d baseline). §14 VSDG memory ordering edges: 57.47% (below §7 baseline — state edges add density without benefit at this scale); ceiling remains ~57–58%.
+**Status:** **COMPLETE.** §7 instruction-level GNN: 58.00%; §8 BigVul instr-level triplet collapsed (pair-sim 0.9984→0.9995); §9 scarnet real-world validation: 10/13 known-vulnerable functions in top-13 of 19 (77% P/R, -O0 -fno-inline). §10b FCL+SAGPooling: 47.58% k-NN, pair-sim 0.9992 — **contrastive learning branch closed** (3/3 experiments collapsed; structural invariance of patches is the binding constraint). Deployed as zero-cost ranker. Three semantic false negatives (format string, null deref, off-by-one) are LLM domain. Pipeline deliverable: block-level GNN 57.84% (`model.pt`). §13 Tier 1 features (Perfograph + call categorization): instruction-level best 58.75% (+0.75pp over §7), block-level 56.75% (below §4d baseline). §14 VSDG memory ordering edges: 57.47% (state edges add density without benefit). §15 register name embedding: 57.47% (name bucket hashing does not generalize across codebases). **IR feature engineering track closed — ceiling confirmed at ~57–58%.**
 
 ---
 
@@ -2120,6 +2120,39 @@ Below the §4d baseline (57.84%). Block-level constant extraction via text regex
 
 ---
 
+## §15 — Register Name Embedding
+
+**Scripts:** `preprocess_instr_v4.py` + `train_instr_v4.py`
+
+**Hypothesis:** At `-O0`, clang preserves source variable names in LLVM IR register names (`%buf.addr`, `%size`, `%cmp`, `%ret`). These names carry semantic signal that opcode categories alone cannot express: a `load` from `%size` is semantically different from a `load` from `%buf` even though the opcode is identical. Hashing register names via FNV-1a into 64 buckets and learning a 16-dim embedding per bucket should give the model a name-level signal without requiring `-g` debug metadata.
+
+**Implementation:** Third node feature column `x[:,2]` = name bucket [0, 64], where 0 is the anonymous sentinel (purely numeric SSA indices). `_name_bucket()` strips the `.addr` suffix clang appends to parameter copies, lowercases, and applies FNV-1a 32-bit hash mod 64 + 1. Model adds `nn.Embedding(65, 16)` for name lookup; conv1 input widens from 129 to 145 (`embed_dim=128 + const_mag=1 + name_embed=16`). Based on §13 (3 relations — drops §14 state edges which showed no benefit).
+
+### Result
+
+**Test accuracy: 57.47%** (10,128 train / 1,254 valid / 1,251 test, 30ep, h=64)
+
+| Metric | §13 (v2) | §14 (v3) | §15 (v4) |
+|---|---|---|---|
+| Val accuracy peak | 59.44% | 56.97% | 58.37% |
+| Test accuracy | 58.75% (best run) | 57.47% | 57.47% |
+| Relations | 3 | 4 | 3 |
+| Extra params | — | — | 1,040 (name embed) |
+
+**No improvement.** Val peaked at 58.37% (close to §13's 59.44%) but test accuracy matched §14's 57.47% — below §13's best. The name embedding learns a representation during training but it does not generalize to the test split.
+
+**Root cause analysis:**
+
+1. **Naming conventions don't transfer across codebases.** Devign spans FFmpeg, QEMU, Linux, and LibreSSL. A `%size` in FFmpeg refers to a completely different data flow context than `%size` in the Linux kernel. The FNV-1a bucket maps all occurrences of `%size` to the same embedding, forcing the model to share weights across unrelated semantic contexts. The embedding learns an average signal that generalizes poorly.
+
+2. **High-information names are sparse.** Most instructions in a function are anonymous (numeric SSA indices) or carry low-signal names (`%tmp`, `%retval`, `%cleanup`). The names that would carry real signal (`%buf`, `%n`, `%offset` near a `getelementptr`) are a small fraction of nodes; the embedding for their buckets is trained on few examples.
+
+3. **Bucket collisions flatten the signal.** With 64 buckets and thousands of distinct names across the dataset, security-relevant names (`buf`, `size`, `len`) share buckets with unrelated names. The collision noise dominates the gradient signal from the few informative name co-occurrences.
+
+**Conclusion:** Register name hashing does not add exploitable signal at Devign scale. The val peak of 58.37% suggests the model briefly finds a training-set-specific correlation, but it does not hold to test. This closes the IR feature engineering track — all recoverable signals from `-O0` LLVM IR have now been tried.
+
+---
+
 ## Future Directions: IR Signal as Fuzzing Context
 
 The §11 and §12 slice experiments were motivated by vulnerability classification, but the
@@ -2353,7 +2386,7 @@ beyond that requires one of the two identifier-augmentation strategies above.
 
 ## Current Conclusion
 
-13 experiments across block-level, instruction-level, slice-based, contrastive, and feature-enriched GNNs on Devign. Every approach converges at the same ceiling: **~57–58% test accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%.
+15 experiments across block-level, instruction-level, slice-based, contrastive, and feature-enriched GNNs on Devign. Every approach converges at the same ceiling: **~57–58% test accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%.
 
 The 7pp gap to CodeBERT is real and has three distinct causes:
 
@@ -2376,6 +2409,7 @@ Devign labels are assigned at git-commit granularity to the function that change
 - **Loss function:** BCE, weighted BCE, focal contrastive — same result.
 - **Granularity:** basic block vs. individual instruction — marginal improvement (+0.16pp), same ceiling.
 - **Feature enrichment:** Perfograph constant encoding + categorical call targets (§13) — marginal +0.75pp best case, high cross-run variance, within noise.
+- **Register name embedding (§15):** FNV-1a hash of LLVM IR register names into 64 buckets, learned 16-dim embedding — 57.47%, no improvement. Names don't transfer across codebases; bucket collisions dominate. **IR feature engineering track closed.**
 
 ### What has not been tried
 
