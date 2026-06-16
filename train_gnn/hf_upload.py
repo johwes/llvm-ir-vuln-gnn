@@ -16,21 +16,32 @@ HERE    = Path(__file__).parent
 REPO_ID = "johnnywesterlund/scar-gnn-defect-detector"
 
 UPLOADS = [
-    ("model.pt",              "model.pt",              "Block-level GNN classifier (55.52% Devign)"),
-    ("model_instr.pt",        "model_instr.pt",         "Instruction-level GNN classifier (56.53% Devign)"),
-    ("model_slice.pt",        "model_slice.pt",         "DFG slice GNN (55.60% Devign)"),
-    ("model_slice_pdg.pt",    "model_slice_pdg.pt",     "PDG slice GNN (56.48% Devign)"),
-    ("MODEL_CARD.md",         "README.md",              "Model card"),
-    ("scan_ir.py",            "scan_ir.py",             "Inference CLI"),
-    ("train.py",              "train.py",               "Training script (block-level)"),
-    ("train_instr.py",        "train_instr.py",         "Training script (instruction-level)"),
-    ("train_slice.py",        "train_slice.py",         "Training script (DFG slice)"),
-    ("train_slice_pdg.py",    "train_slice_pdg.py",     "Training script (PDG slice)"),
-    ("preprocess.py",         "preprocess.py",          "IR graph extractor (block-level)"),
-    ("preprocess_instr.py",   "preprocess_instr.py",    "IR graph extractor (instruction-level)"),
-    ("preprocess_slice.py",   "preprocess_slice.py",    "IR graph extractor (DFG slice)"),
-    ("preprocess_slice_pdg.py","preprocess_slice_pdg.py","IR graph extractor (PDG slice)"),
-    ("requirements.txt",      "requirements.txt",       "Python dependencies"),
+    # Model checkpoints
+    ("model.pt",               "model.pt",               "Block-level GNN classifier (55.52% Devign)"),
+    ("model_instr.pt",         "model_instr.pt",         "Instruction-level GNN classifier §7 (56.53% Devign)"),
+    ("model_slice.pt",         "model_slice.pt",         "DFG slice GNN §11 (55.60% Devign)"),
+    ("model_slice_pdg.pt",     "model_slice_pdg.pt",     "PDG slice GNN §12 (56.48% Devign)"),
+    # Model card
+    ("MODEL_CARD.md",          "README.md",              "Model card"),
+    # Inference
+    ("scan_ir.py",             "scan_ir.py",             "Inference CLI"),
+    # Training scripts
+    ("train.py",               "train.py",               "Training script §4d (block-level)"),
+    ("train_instr.py",         "train_instr.py",         "Training script §7 (instruction-level baseline)"),
+    ("train_instr_v2.py",      "train_instr_v2.py",      "Training script §13 (Perfograph + call targets)"),
+    ("train_instr_v3.py",      "train_instr_v3.py",      "Training script §14 (VSDG memory ordering edges)"),
+    ("train_instr_v4.py",      "train_instr_v4.py",      "Training script §15 (register name embedding)"),
+    ("train_slice.py",         "train_slice.py",         "Training script §11 (DFG slice)"),
+    ("train_slice_pdg.py",     "train_slice_pdg.py",     "Training script §12 (PDG slice)"),
+    # Preprocessing scripts
+    ("preprocess.py",          "preprocess.py",          "IR graph extractor (block-level)"),
+    ("preprocess_instr.py",    "preprocess_instr.py",    "IR graph extractor §7 (instruction-level baseline)"),
+    ("preprocess_instr_v2.py", "preprocess_instr_v2.py", "IR graph extractor §13 (Perfograph + call targets)"),
+    ("preprocess_instr_v3.py", "preprocess_instr_v3.py", "IR graph extractor §14 (VSDG state edges)"),
+    ("preprocess_instr_v4.py", "preprocess_instr_v4.py", "IR graph extractor §15 (register name embedding)"),
+    ("preprocess_slice.py",    "preprocess_slice.py",    "IR graph extractor §11 (DFG slice)"),
+    ("preprocess_slice_pdg.py","preprocess_slice_pdg.py","IR graph extractor §12 (PDG slice)"),
+    ("requirements.txt",       "requirements.txt",       "Python dependencies"),
 ]
 
 
