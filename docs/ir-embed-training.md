@@ -1,7 +1,7 @@
 # Training the Defect-Detection GNN — Step-by-Step
 
 Practical guide to go from zero to a trained GNN on the Devign dataset.
-All scripts live in `experiments/ir_embed_demo/train_gnn/`.
+All scripts live in `train_gnn/`.
 
 ---
 
@@ -22,10 +22,17 @@ For full training: see the AWS section at the bottom.
 ## Directory layout
 
 ```
-experiments/ir_embed_demo/train_gnn/
+train_gnn/
 ├── requirements.txt        ← Python dependencies
-├── preprocess.py           ← download + compile + build graphs
-├── train.py                ← train GNN, save checkpoint
+├── preprocess.py           ← download + compile + build graphs (block-level)
+├── train.py                ← train block-level GNN, save model.pt
+├── preprocess_instr.py     ← instruction-level graph extractor
+├── train_instr.py          ← train instruction-level GNN, save model_instr.pt
+├── preprocess_slice.py     ← DFG backward slice extractor (§11)
+├── train_slice.py          ← train slice GNN, save model_slice.pt
+├── preprocess_slice_pdg.py ← PDG slice extractor (§12)
+├── train_slice_pdg.py      ← train PDG slice GNN, save model_slice_pdg.pt
+├── scan_ir.py              ← score a function with a trained model
 └── data/                   ← created by preprocess.py (not in git)
     ├── devign.json         ← raw Devign download
     ├── train.jsonl         ← 80% split
@@ -41,7 +48,7 @@ experiments/ir_embed_demo/train_gnn/
 ## Step 1 — Install dependencies
 
 ```bash
-cd experiments/ir_embed_demo/train_gnn
+cd train_gnn
 
 # CPU-only install (laptop):
 pip install gdown
@@ -87,8 +94,8 @@ The dataset is hosted on Google Drive via the CodeXGLUE benchmark.
 `preprocess.py` downloads it automatically using `gdown`:
 
 ```bash
-python preprocess.py --subset 500   # laptop: 500 examples → ~240 graphs, takes ~2 min
-python preprocess.py                # full: 27K examples, takes ~30-60 min
+python preprocess.py --subset 500   # laptop: 500 examples → ~240 graphs, ~2 min
+python preprocess.py                # full: 27K examples → ~10K graphs, ~30-60 min
 ```
 
 What it does:
@@ -171,10 +178,13 @@ Model: DefectGNN(in=11, hidden=32)  params=2,305
 
 Epoch    Loss   Val Acc
 ----------------------------
-    1  0.6821    53.00%
-    5  0.6103    58.00%  ← best
-   10  0.5814    61.00%  ← best
+    1  0.6931    50.00%
+    5  0.6712    54.00%  ← best
+   10  0.6604    56.00%  ← best
 ```
+
+At subset scale (400 training graphs) results are noisy — this is a pipeline smoke test,
+not a meaningful accuracy measurement.
 
 ---
 
@@ -211,14 +221,21 @@ scp -i your-key.pem ubuntu@<ip>:~/train_gnn/model.pt .
 # Terminate immediately to stop billing
 ```
 
-Full training hyperparameters:
+Full training hyperparameters (block-level, best published result 57.84%):
 ```bash
-python train.py \
-    --epochs 30 \
-    --hidden 64 \
-    --lr 1e-3 \
-    --batch-size 32 \
-    --checkpoint model.pt
+python train.py --epochs 60 --hidden 128 --checkpoint model.pt
+```
+
+Instruction-level (best published result 58.00% — peaks at epoch ~17, larger runs overfit):
+```bash
+python preprocess_instr.py
+python train_instr.py --epochs 30 --hidden 64 --checkpoint model_instr.pt
+```
+
+Slice variants (both ~56.5%):
+```bash
+python preprocess_slice.py && python train_slice.py --epochs 30 --hidden 64
+python preprocess_slice_pdg.py && python train_slice_pdg.py --epochs 30 --hidden 64
 ```
 
 ---
@@ -227,14 +244,16 @@ python train.py \
 
 | Scale | Accuracy target | Notes |
 |---|---|---|
-| 500 samples, 10 epochs (laptop) | 55–62% | Sanity check only |
-| Full Devign, 30 epochs (AWS) | 62–68% | On par with CodeBERT |
+| 500 samples, 10 epochs (laptop) | 50–56% | Sanity check only |
+| Full Devign, 30–60 epochs (AWS) | 55–58% | Empirical ceiling with current features |
 
-62% matches the published CodeBERT baseline on Devign. The GNN operates
-on IR structure rather than source tokens, so with enough data it should
-approach that range. Whether it exceeds UniXcoder (69.3%) is the
-interesting research question — that would mean the structural
-representation is earning its extra complexity.
+**The structural ceiling on Devign is ~57–58%** across all 12 experiments run in this
+project (block-level, instruction-level, slice-based, various loss functions). The
+majority-class baseline is 56.6%, so meaningful learning does occur — but the gap to
+CodeBERT (63.4%) is a representation problem, not an architecture problem. CodeBERT
+reads identifier names and string literals from source; our GNN sees only opcode
+categories. See `docs/ir-embed.md` § "Future Directions: Feature Extraction Improvements"
+for the ranked list of what would actually move this number.
 
 ---
 
@@ -303,3 +322,123 @@ The model is predicting 50/50. Try:
 - More epochs
 - Lower learning rate (`--lr 1e-4`)
 - Larger hidden dimension (`--hidden 128`)
+
+---
+
+## Retraining cookbook — implementing the Tier 1 improvements
+
+The feature extraction improvements ranked in `docs/ir-embed.md` § "Future Directions:
+Feature Extraction Improvements" each have a specific touch point. This section maps
+improvement → files to change → how to evaluate.
+
+---
+
+### 1. Perfograph constant encoding
+
+**Touch point:** `preprocess.py` and `preprocess_instr.py`, wherever constants are
+currently encoded as a binary flag.
+
+In `preprocess.py` (block-level), find the node feature vector construction and replace
+any `has_constant` or similar binary flag with:
+
+```python
+import math
+def encode_constant(val):
+    return math.copysign(math.log2(abs(val) + 1), val) if val != 0 else 0.0
+```
+
+In `preprocess_instr.py` (instruction-level), the constant node currently gets opcode
+ID 76/77 (constant int/fp). Augment the node feature with the encoded value as a
+second channel alongside the opcode index.
+
+**Evaluate:** re-run `preprocess.py` → `train.py --epochs 60 --hidden 128`. Compare
+test accuracy to the 57.84% baseline.
+
+---
+
+### 2. Categorical call target mapping
+
+**Touch point:** `preprocess.py` (`has_call` flag) and `preprocess_instr.py` (mock node
+naming in Pass 3).
+
+Replace the single `has_call` binary with 6 binary flags, one per category:
+
+```python
+_CALL_BUCKETS = {
+    "alloc":   {"malloc","calloc","realloc","kmalloc","kzalloc","av_malloc","g_malloc","g_new"},
+    "copy":    {"memcpy","memmove","memset"},
+    "string":  {"strcpy","strncpy","strcat","strncat","sprintf","snprintf","gets","fgets","scanf"},
+    "file_io": {"fopen","fread","fwrite","fclose","read","write","open"},
+    "network": {"recv","send","accept","connect","recvfrom","sendto"},
+}
+# anything else → "internal" (no flag set)
+```
+
+In `preprocess_instr.py` the mock node already stores the call target name — extend
+`_instr_node_id()` to return a bucket-specific opcode ID for call instructions targeting
+known-dangerous functions rather than a single generic `call` ID.
+
+**Evaluate:** re-run preprocess + train. Check whether Scarnet false negatives
+(`handle_set`, `handle_del`) improve in `eval_scarnet.sh`.
+
+---
+
+### 3. IR2Vec vocabulary replacement
+
+**Touch point:** `preprocess_instr.py` (node feature extraction) and `train_instr.py`
+(replace `nn.Embedding` with pre-computed float vectors).
+
+**Step 1** — generate IR2Vec embeddings for each `.ll` file:
+
+```bash
+# Requires LLVM 17+ with IR2Vec analysis pass
+opt -passes=ir2vec-vocab -ir2vec-vocab-file=vocab.bin input.ll -o /dev/null
+```
+
+IR2Vec outputs a fixed-size vector per instruction. Export to numpy:
+
+```python
+# Use llvmlite or llvm-project Python bindings to extract per-instruction embeddings
+# and save as a dict {function_name: {instr_ptr: np.ndarray(300,)}}
+```
+
+**Step 2** — in `preprocess_instr.py`, replace the opcode integer index with the
+300-dim IR2Vec float vector as the node feature.
+
+**Step 3** — in `train_instr.py`, replace `nn.Embedding(VOCAB_SIZE, 128)` with a
+`nn.Linear(300, 128)` projection layer as the first step.
+
+**Evaluate:** re-run preprocess_instr + train_instr. Compare to the 58.00% instruction-
+level baseline.
+
+---
+
+### Retraining from SCAR accepted patches (self-improving corpus)
+
+Each SCAR accepted patch on any target is a labelled `(vulnerable IR, fixed IR)` pair
+at zero marginal cost. To incorporate new patches into the training data:
+
+1. For each `accepted` entry in `scar-results.json`:
+   - The original source file (before patch) is the vulnerable version.
+   - Apply the patch with `patch -o fixed.c original.c patch.diff`.
+   - Compile both: `clang -O0 -fno-inline -S -emit-llvm`.
+   - Extract the enclosing function from each `.ll`.
+
+2. Run `preprocess.py` (or `preprocess_instr.py`) on the new IR files to produce graph
+   objects in the same pickle format as the Devign data.
+
+3. Append to `data/train_graphs.pkl`:
+   ```python
+   import pickle
+   with open("data/train_graphs.pkl", "rb") as f:
+       existing = pickle.load(f)
+   existing.extend(new_scar_graphs)
+   with open("data/train_graphs.pkl", "wb") as f:
+       pickle.dump(existing, f)
+   ```
+
+4. Re-run `train.py` (or `train_instr.py`) with the same hyperparameters.
+   The model specialises to the vulnerability patterns SCAR encounters in practice.
+
+**Trigger:** after every 50–100 new accepted patches, or when Scarnet evaluation
+(`eval_scarnet.sh`) shows regression on previously-detected functions.
