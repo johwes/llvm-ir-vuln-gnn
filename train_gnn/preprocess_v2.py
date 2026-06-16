@@ -846,7 +846,7 @@ _BLOCK_CONST_RE = re.compile(r'\bi(?:8|16|32|64)\s+(-?\d+)\b(?!\s*[\*x])')
 
 def _const_magnitude(val: float) -> float:
     """Perfograph log-scale constant encoding: sign(C) * log2(|C| + 1)."""
-    if val == 0.0:
+    if val == 0.0 or not math.isfinite(val):
         return 0.0
     try:
         return math.copysign(math.log2(abs(val) + 1.0), val)

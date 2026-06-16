@@ -82,7 +82,9 @@ def load_graphs(pkl_path: Path) -> list[Data]:
 
     dataset = []
     for g in raw:
-        x          = torch.tensor(g["x"],          dtype=torch.float)
+        x          = torch.nan_to_num(
+                         torch.tensor(g["x"], dtype=torch.float),
+                         nan=0.0, posinf=0.0, neginf=0.0)
         edge_index = torch.tensor(g["edge_index"],  dtype=torch.long)
         edge_type  = torch.tensor(g["edge_type"],   dtype=torch.long)
         y          = torch.tensor([g["y"]],         dtype=torch.float)

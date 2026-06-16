@@ -152,7 +152,7 @@ _CONST_FP_VAL_RE  = re.compile(r'^\S+\s+(.+)$')
 
 def _const_magnitude(val: float) -> float:
     """sign(C) * log2(|C| + 1) — compact, order-preserving constant encoding."""
-    if val == 0.0:
+    if val == 0.0 or not math.isfinite(val):
         return 0.0
     try:
         return math.copysign(math.log2(abs(val) + 1.0), val)
