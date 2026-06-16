@@ -40,8 +40,9 @@ Best single-run result: **58.75%** (`train_instr_v2.py`). High cross-run varianc
 at the ~1,250-sample split scale makes this a noisy improvement over §7's 56.53%.
 
 §14 adds VSDG memory ordering edges (load/store pairs on the same pointer → directed state
-edge, type=3, `num_relations` 3→4). Results pending. Scripts: `preprocess_instr_v3.py`,
-`train_instr_v3.py`.
+edge, type=3, `num_relations` 3→4). Result: **57.47%** — below §7 baseline. State edges
+add density without benefit at Devign scale; val accuracy peaked lower (56.97% vs 59.44%
+in §13), confirming no improvement. Scripts: `preprocess_instr_v3.py`, `train_instr_v3.py`.
 
 ## Model Description
 

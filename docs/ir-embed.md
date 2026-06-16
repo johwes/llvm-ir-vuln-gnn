@@ -2,7 +2,7 @@
 
 **Code:** `experiments/ir_embed_demo/`  
 **Hypothesis:** `docs/research.md` — Contrastive structural embeddings over LLVM IR  
-**Status:** **COMPLETE.** §7 instruction-level GNN: 58.00%; §8 BigVul instr-level triplet collapsed (pair-sim 0.9984→0.9995); §9 scarnet real-world validation: 10/13 known-vulnerable functions in top-13 of 19 (77% P/R, -O0 -fno-inline). §10b FCL+SAGPooling: 47.58% k-NN, pair-sim 0.9992 — **contrastive learning branch closed** (3/3 experiments collapsed; structural invariance of patches is the binding constraint). Deployed as zero-cost ranker. Three semantic false negatives (format string, null deref, off-by-one) are LLM domain. Pipeline deliverable: block-level GNN 57.84% (`model.pt`). §13 Tier 1 features (Perfograph + call categorization): instruction-level best 58.75% (+0.75pp over §7), block-level 56.75% (below §4d baseline); ceiling remains ~57–58%.
+**Status:** **COMPLETE.** §7 instruction-level GNN: 58.00%; §8 BigVul instr-level triplet collapsed (pair-sim 0.9984→0.9995); §9 scarnet real-world validation: 10/13 known-vulnerable functions in top-13 of 19 (77% P/R, -O0 -fno-inline). §10b FCL+SAGPooling: 47.58% k-NN, pair-sim 0.9992 — **contrastive learning branch closed** (3/3 experiments collapsed; structural invariance of patches is the binding constraint). Deployed as zero-cost ranker. Three semantic false negatives (format string, null deref, off-by-one) are LLM domain. Pipeline deliverable: block-level GNN 57.84% (`model.pt`). §13 Tier 1 features (Perfograph + call categorization): instruction-level best 58.75% (+0.75pp over §7), block-level 56.75% (below §4d baseline). §14 VSDG memory ordering edges: 57.47% (below §7 baseline — state edges add density without benefit at this scale); ceiling remains ~57–58%.
 
 ---
 
@@ -2088,6 +2088,38 @@ Below the §4d baseline (57.84%). Block-level constant extraction via text regex
 
 ---
 
+## §14 — VSDG Memory Ordering Edges
+
+**Scripts:** `preprocess_instr_v3.py` + `train_instr_v3.py`
+
+**Hypothesis:** Adding a 4th edge relation (State, type=3) between consecutive `load`/`store` instructions on the same pointer operand encodes memory operation ordering that CFG and DFG edges miss. Specifically targets use-after-free and double-free patterns where the vulnerability is in the *sequence* of memory operations, not the presence of any particular opcode.
+
+**Implementation:** Pass 5 in the graph extractor groups load/store instructions by the stable C++ pointer identity of their pointer operand. Consecutive pairs (in block-iteration order) get a directed state edge from earlier to later. Model change: `num_relations` 3 → 4 (one additional RGCN weight matrix per layer).
+
+### Result
+
+**Test accuracy: 57.47%** (10,126 train / 1,255 valid / 1,251 test, 30ep, h=64)
+
+| Metric | §13 (v2) | §14 (v3) |
+|---|---|---|
+| Val accuracy peak | 59.44% | 56.97% |
+| Test accuracy | 58.75% (best run) | 57.47% |
+| Relations | 3 | 4 |
+
+**No improvement.** Val accuracy peaked lower (56.97% vs 59.44%) and test accuracy is below the §7 baseline (58.00%). This is a negative result.
+
+**Root cause analysis:**
+
+1. **Edge density on hot pointers.** A pointer accessed 5 times produces a chain of 4 consecutive state edges. In typical Devign functions these chains add extra paths the RGCN must weigh against DFG/CFG, introducing noise without adding discriminative signal at this dataset scale.
+
+2. **Redundancy with global edges.** The Virtual Context Node already propagates load/store information across the full graph in 2 hops. State edges attempt to encode local ordering on top of a globally-connected structure — the marginal information is small and the extra weight matrix requires more data to converge.
+
+3. **Absence-of-guard is still the binding constraint.** State edges capture ordering between memory ops that *are present*. The UAF pattern — a load after a free — only appears if the IR contains both the free and the subsequent load. In Devign, the vulnerable functions often don't contain the free (it's in a callee); the model sees only the post-free access without the free itself.
+
+**Conclusion:** Memory ordering edges add complexity without benefit at Devign scale. The result is consistent with the broader finding that the ceiling is a representation problem (missing identifier semantics), not an edge-type problem.
+
+---
+
 ## Future Directions: IR Signal as Fuzzing Context
 
 The §11 and §12 slice experiments were motivated by vulnerability classification, but the
@@ -2340,9 +2372,10 @@ Devign labels are assigned at git-commit granularity to the function that change
 ### What the experiments ruled out
 
 - **Architecture:** block, instruction, slice, PDG slice, contrastive — all hit the same ceiling. Architecture is not the bottleneck.
-- **Edge types:** CFG vs. CFG+DFG (§4c) vs. PDG slice (§12) — marginal differences, no ceiling break.
+- **Edge types:** CFG vs. CFG+DFG (§4c) vs. PDG slice (§12) vs. VSDG state edges (§14) — marginal differences, no ceiling break. Adding a 4th relation for memory ordering hurt slightly (57.47% vs 58.00%).
 - **Loss function:** BCE, weighted BCE, focal contrastive — same result.
 - **Granularity:** basic block vs. individual instruction — marginal improvement (+0.16pp), same ceiling.
+- **Feature enrichment:** Perfograph constant encoding + categorical call targets (§13) — marginal +0.75pp best case, high cross-run variance, within noise.
 
 ### What has not been tried
 
