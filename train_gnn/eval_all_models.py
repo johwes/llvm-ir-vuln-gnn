@@ -290,8 +290,9 @@ def _collect_functions(path: Path) -> list[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 
 def _score(model: nn.Module, g: dict) -> float:
-    x  = torch.nan_to_num(torch.tensor(g["x"], dtype=torch.float),
-                          nan=0., posinf=0., neginf=0.)
+    x  = torch.tensor(g["x"])  # preserve dtype: Long for v1, float for v2+
+    if x.is_floating_point():
+        x = torch.nan_to_num(x, nan=0., posinf=0., neginf=0.)
     ei = torch.tensor(g["edge_index"], dtype=torch.long)
     et = torch.tensor(g["edge_type"],  dtype=torch.long)
     batch = torch.zeros(x.shape[0], dtype=torch.long)
