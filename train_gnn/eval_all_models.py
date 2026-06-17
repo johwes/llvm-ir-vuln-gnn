@@ -98,13 +98,12 @@ def _load_block(path: Path) -> nn.Module:
     return m.eval()
 
 
-def _load_instr_auto(path: Path) -> nn.Module:
+def _load_instr_auto(path: Path) -> tuple[nn.Module, object]:
     """Load any InstructionGNN checkpoint by detecting the architecture from weights.
 
-    Reads vocab_size, embed_dim, hidden, num_relations and extra input features
-    directly from the checkpoint tensor shapes instead of relying on the filename
-    or module constants.  This handles checkpoints that were saved to a different
-    filename than the script that produced them.
+    Returns (model, preprocess_fn) — the preprocessor that matches the detected
+    architecture, which may differ from the registry entry if the checkpoint was
+    saved under the wrong filename.
 
     Detected variants:
       has name_embed.weight          → v4 (register name embedding)
@@ -126,20 +125,25 @@ def _load_instr_auto(path: Path) -> nn.Module:
 
     if has_name:
         name_embed_dim = ckpt["name_embed.weight"].shape[1]
-        variant = f"v4 (name_embed, in={conv1_in}, rels={num_relations})"
-        m = _m_v4.InstructionGNN(vocab_size, embed_dim, hidden, name_embed_dim)
+        variant    = f"v4 (name_embed, in={conv1_in}, rels={num_relations})"
+        m          = _m_v4.InstructionGNN(vocab_size, embed_dim, hidden, name_embed_dim)
+        preprocess = _pp_instr_v4
     elif num_relations == 4:
-        variant = f"v3 (VSDG state edges, in={conv1_in}, rels=4)"
-        m = _m_v3.InstructionGNN(vocab_size, embed_dim, hidden)
+        variant    = f"v3 (VSDG state edges, in={conv1_in}, rels=4)"
+        m          = _m_v3.InstructionGNN(vocab_size, embed_dim, hidden)
+        preprocess = _pp_instr_v3
     elif extra == 0:
-        variant = f"v1 (opcode only, in={conv1_in}, rels={num_relations})"
-        m = _m_v1.InstructionGNN(vocab_size, embed_dim, hidden)
+        variant    = f"v1 (opcode only, in={conv1_in}, rels={num_relations})"
+        m          = _m_v1.InstructionGNN(vocab_size, embed_dim, hidden)
+        preprocess = _pp_instr_v1
     elif extra == 1:
-        variant = f"v2 (+ const_mag, in={conv1_in}, rels={num_relations})"
-        m = _m_v2.InstructionGNN(vocab_size, embed_dim, hidden)
+        variant    = f"v2/§13 (+ const_mag, in={conv1_in}, rels={num_relations})"
+        m          = _m_v2.InstructionGNN(vocab_size, embed_dim, hidden)
+        preprocess = _pp_instr_v2
     elif extra == 2:
-        variant = f"v5/v6 (+ flag/taint, in={conv1_in}, rels={num_relations})"
-        m = _m_v5.InstructionGNN(vocab_size, embed_dim, hidden)
+        variant    = f"v5/v6 (+ flag/taint, in={conv1_in}, rels={num_relations})"
+        m          = _m_v5.InstructionGNN(vocab_size, embed_dim, hidden)
+        preprocess = _pp_instr_v6   # v6 is a superset; works for both v5 and v6 weights
     else:
         raise ValueError(
             f"Unrecognised InstructionGNN shape: vocab={vocab_size}, "
@@ -148,7 +152,7 @@ def _load_instr_auto(path: Path) -> nn.Module:
 
     print(f"    detected {variant}, vocab={vocab_size}, hidden={hidden}")
     m.load_state_dict(ckpt)
-    return m.eval()
+    return m.eval(), preprocess
 
 
 def _load_slice(path: Path) -> nn.Module:
@@ -297,7 +301,7 @@ def _score(model: nn.Module, g: dict) -> float:
 def _run_model(entry: dict, functions: list[tuple[str, str]]) -> list[tuple[str, float]]:
     """Score all functions with one model. Returns [(fn_name, score), ...] sorted desc."""
     results = []
-    preprocess = entry["preprocess"]
+    preprocess = entry["_preprocess"]   # set by main() after load; accounts for auto-detected arch
     model      = entry["_model"]
     for fn_name, fn_ir in functions:
         g = preprocess(fn_ir)
@@ -527,7 +531,17 @@ def main():
         label = entry["label"]
         print(f"[{entry['checkpoint']}]  {label}")
         try:
-            entry["_model"] = entry["load_model"](entry["_ckpt_path"])
+            result = entry["load_model"](entry["_ckpt_path"])
+            # _load_instr_auto returns (model, preprocess_fn); other loaders return model only
+            if isinstance(result, tuple):
+                entry["_model"], detected_pp = result
+                if detected_pp is not entry["preprocess"]:
+                    print(f"  NOTE: using detected preprocessor (checkpoint architecture "
+                          f"differs from registry — file was likely overwritten)")
+                entry["_preprocess"] = detected_pp
+            else:
+                entry["_model"]      = result
+                entry["_preprocess"] = entry["preprocess"]
         except Exception as e:
             print(f"  ERROR loading checkpoint: {e}\n")
             continue
