@@ -604,6 +604,16 @@ def main():
         print()
         summary_rows.append(row)
 
+    # Compute ensemble (max score per function across all models)
+    ensemble_ranked: list[tuple[str, float]] = []
+    if len(summary_rows) > 1:
+        best: dict[str, float] = {}
+        for row in summary_rows:
+            for fn_name, score in row["ranked"]:
+                if fn_name not in best or score > best[fn_name]:
+                    best[fn_name] = score
+        ensemble_ranked = sorted(best.items(), key=lambda x: x[1], reverse=True)
+
     # Per-model ranked lists
     if not args.summary_only:
         for row in summary_rows:
@@ -623,9 +633,28 @@ def main():
                 print(f"  {i:>4}  {fn:<45}  {score:>5.1%}  {vuln_marker:>5}")
             print()
 
+        if ensemble_ranked:
+            print(f"=== ENSEMBLE  (max score across all models) ===")
+            boundary = top_k if top_k else len(ensemble_ranked)
+            print(f"  {'Rank':>4}  {'Function':<45}  {'Score':>6}  {'Vuln?':>5}")
+            print(f"  {'----':>4}  {'-'*45}  {'------':>6}  {'-----':>5}")
+            for i, (fn, score) in enumerate(ensemble_ranked, 1):
+                if i == boundary + 1:
+                    print(f"  {'----':>4}  {'-'*45}  {'------':>6}  (below top-{boundary})")
+                vuln_marker = ""
+                if answer_key:
+                    vuln_marker = "YES" if fn in answer_key else "no"
+                print(f"  {i:>4}  {fn:<45}  {score:>5.1%}  {vuln_marker:>5}")
+            print()
+
     # Summary table
     if not summary_rows:
         return
+
+    ensemble_pr: dict = {}
+    if ensemble_ranked and answer_key and top_k:
+        n, prec, rec = _precision_recall(ensemble_ranked, answer_key, top_k)
+        ensemble_pr = {"hits": n, "prec": prec, "rec": rec}
 
     print("=" * 80)
     print("SUMMARY")
@@ -641,6 +670,12 @@ def main():
             rec_str  = f"{row['rec']:.1%}"  if row['rec']  is not None else "—"
             pr_cols = f"  {hits_str:>6}  {prec_str:>6}  {rec_str:>6}"
         print(f"  {row['checkpoint']:<24}  {row['label']:<35}  {row['devign']:>7}{pr_cols}")
+    if ensemble_ranked:
+        pr_cols = ""
+        if ensemble_pr:
+            hits_str = f"{ensemble_pr['hits']}/{len(answer_key)}"
+            pr_cols  = (f"  {hits_str:>6}  {ensemble_pr['prec']:.1%}  {ensemble_pr['rec']:.1%}")
+        print(f"  {'ENSEMBLE (max)':<24}  {'all models combined':<35}  {'—':>7}{pr_cols}")
     if answer_key:
         print(f"\n  K = {top_k}")
 
