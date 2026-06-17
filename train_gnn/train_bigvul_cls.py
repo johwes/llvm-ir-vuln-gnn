@@ -179,10 +179,14 @@ def main():
     print(f"Test accuracy ({label} test split): {test_acc:.2%}")
     print(f"Checkpoint: {checkpoint.resolve()}\n")
 
-    print("--- Comparison ---")
-    print(f"  CodeBERT fine-tuned (source code, identifiers):  63.43%")
-    print(f"  §13 Perfograph best (Devign-trained):            58.75%")
-    print(f"  This run ({label}):  {test_acc:.2%}")
+    neg_count   = sum(1 for d in test_data if d.y.item() == 0)
+    majority_bl = neg_count / len(test_data) if test_data else 0.0
+    print(f"  Majority-class baseline (predict all negative): {majority_bl:.2%}")
+    print(f"  This run ({label}):                              {test_acc:.2%}")
+    print()
+    print("NOTE: accuracy on this imbalanced dataset is not directly comparable to")
+    print("      Devign-trained models (CodeBERT 63.43%, §13 58.75% were on ~50/50 split).")
+    print("      Use eval_all_models.py --scarnet for a fair real-world comparison.")
     print()
     print("Next: run eval_all_models.py --scarnet to compare against Devign-trained models")
     print()
