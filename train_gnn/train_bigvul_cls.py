@@ -73,16 +73,28 @@ def train_epoch(model, loader, optimizer, device, pos_weight=None):
 
 @torch.no_grad()
 def evaluate(model, loader, device):
+    """Return (accuracy, balanced_accuracy).
+
+    Balanced accuracy = mean(TPR, TNR) — robust to class imbalance.
+    Raw accuracy is kept for display; balanced accuracy drives checkpoint saving.
+    """
     model.eval()
-    correct = total = 0
+    tp = fp = tn = fn = 0
     for batch in loader:
         batch  = batch.to(device)
         logits = model(batch.x, batch.edge_index, batch.edge_type, batch.batch)
         preds  = (logits > 0).long()
         labels = batch.y.squeeze().long()
-        correct += (preds == labels).sum().item()
-        total   += batch.num_graphs
-    return correct / total if total > 0 else 0.0
+        tp += ((preds == 1) & (labels == 1)).sum().item()
+        fp += ((preds == 1) & (labels == 0)).sum().item()
+        tn += ((preds == 0) & (labels == 0)).sum().item()
+        fn += ((preds == 0) & (labels == 1)).sum().item()
+    total = tp + fp + tn + fn
+    acc      = (tp + tn) / total if total > 0 else 0.0
+    tpr      = tp / (tp + fn) if (tp + fn) > 0 else 0.0  # recall / sensitivity
+    tnr      = tn / (tn + fp) if (tn + fp) > 0 else 0.0  # specificity
+    bal_acc  = (tpr + tnr) / 2
+    return acc, bal_acc
 
 
 def main():
@@ -156,33 +168,33 @@ def main():
     checkpoint = Path(args.checkpoint)
     best_val   = 0.0
 
-    print(f"{'Epoch':>5}  {'Loss':>8}  {'Val Acc':>8}  {'':>8}")
-    print("-" * 38)
+    print(f"{'Epoch':>5}  {'Loss':>8}  {'Val Acc':>8}  {'Bal Acc':>8}  {'':>8}")
+    print("-" * 48)
 
     for epoch in range(1, args.epochs + 1):
-        loss    = train_epoch(model, train_loader, optimizer, device, pos_weight)
-        val_acc = evaluate(model, valid_loader, device)
+        loss              = train_epoch(model, train_loader, optimizer, device, pos_weight)
+        val_acc, bal_acc  = evaluate(model, valid_loader, device)
         scheduler.step()
 
         marker = ""
-        if val_acc > best_val:
-            best_val = val_acc
+        if bal_acc > best_val:
+            best_val = bal_acc
             torch.save(model.state_dict(), checkpoint)
             marker = "<- best"
-        print(f"{epoch:>5}  {loss:>8.4f}  {val_acc:>8.2%}  {marker}")
+        print(f"{epoch:>5}  {loss:>8.4f}  {val_acc:>8.2%}  {bal_acc:>8.2%}  {marker}")
 
     print(f"\nLoading best checkpoint ({checkpoint}) ...")
     model.load_state_dict(torch.load(checkpoint, map_location=device,
                                      weights_only=True))
-    test_acc = evaluate(model, test_loader, device)
+    test_acc, test_bal = evaluate(model, test_loader, device)
     label = "BigVul+Devign" if args.combine_devign else "BigVul"
-    print(f"Test accuracy ({label} test split): {test_acc:.2%}")
+    print(f"Test accuracy ({label} test split): {test_acc:.2%}  (balanced: {test_bal:.2%})")
     print(f"Checkpoint: {checkpoint.resolve()}\n")
 
     neg_count   = sum(1 for d in test_data if d.y.item() == 0)
     majority_bl = neg_count / len(test_data) if test_data else 0.0
     print(f"  Majority-class baseline (predict all negative): {majority_bl:.2%}")
-    print(f"  This run ({label}):                              {test_acc:.2%}")
+    print(f"  This run ({label}):  raw={test_acc:.2%}  balanced={test_bal:.2%}")
     print()
     print("NOTE: accuracy on this imbalanced dataset is not directly comparable to")
     print("      Devign-trained models (CodeBERT 63.43%, §13 58.75% were on ~50/50 split).")
