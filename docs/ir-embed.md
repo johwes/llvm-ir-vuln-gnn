@@ -2,7 +2,7 @@
 
 **Code:** `experiments/ir_embed_demo/`  
 **Hypothesis:** `docs/research.md` — Contrastive structural embeddings over LLVM IR  
-**Status:** **COMPLETE (18 experiments).** §7 instruction-level GNN: 58.00%; §8 BigVul instr-level triplet collapsed (pair-sim 0.9984→0.9995); §9 scarnet real-world validation: 10/13 known-vulnerable functions in top-13 of 19 (77% P/R, -O0 -fno-inline). §10b FCL+SAGPooling: 47.58% k-NN, pair-sim 0.9992 — **contrastive learning branch closed** (3/3 experiments collapsed; structural invariance of patches is the binding constraint). Deployed as zero-cost ranker. Three semantic false negatives (format string, null deref, off-by-one) are LLM domain. Pipeline deliverable: block-level GNN 57.84% (`model.pt`). §13 Tier 1 features (Perfograph + call categorization): instruction-level best 58.75% (+0.75pp over §7), block-level 56.75% (below §4d baseline). §14 VSDG memory ordering edges: 57.47% (state edges add density without benefit). §15 register name embedding: 57.47% (name bucket hashing does not generalize across codebases). **IR feature engineering track closed — ceiling confirmed at ~57–58%.** §16 static analysis flags: 57.15% (14% coverage bottleneck). §17 taint propagation: 58.00% (+0.85pp), 82% ceiling miss rate. §18 full sweep on scarnet: best models (§13, §17, §12) reach **84.6% P/R** on real-world vulnerable code; block model 69.2%. Ensemble (block + §17) covers all 13 vulnerable functions.
+**Status:** **COMPLETE (19 experiments).** §7 instruction-level GNN: 58.00%; §8 BigVul instr-level triplet collapsed (pair-sim 0.9984→0.9995); §9 scarnet real-world validation: 10/13 known-vulnerable functions in top-13 of 19 (77% P/R, -O0 -fno-inline). §10b FCL+SAGPooling: 47.58% k-NN, pair-sim 0.9992 — **contrastive learning branch closed** (3/3 experiments collapsed; structural invariance of patches is the binding constraint). Deployed as zero-cost ranker. Three semantic false negatives (format string, null deref, off-by-one) are LLM domain. Pipeline deliverable: block-level GNN 57.84% (`model.pt`). §13 Tier 1 features (Perfograph + call categorization): instruction-level best 58.75% (+0.75pp over §7), block-level 56.75% (below §4d baseline). §14 VSDG memory ordering edges: 57.47% (state edges add density without benefit). §15 register name embedding: 57.47% (name bucket hashing does not generalize across codebases). **IR feature engineering track closed — ceiling confirmed at ~57–58%.** §16 static analysis flags: 57.15% (14% coverage bottleneck). §17 taint propagation: 58.00% (+0.85pp), 82% ceiling miss rate. §18 full sweep on scarnet: best models (§13, §17, §12) reach **84.6% P/R**; block model 69.2%. §19 ensemble (max and mean): neither beats best single model — dispatch FP (78.3%, block only) anchors both ensembles. 84.6% is the practical single-model ceiling.
 
 ---
 
@@ -2498,9 +2498,7 @@ with llvmlite, likely due to LLVM 15+ opaque pointer syntax incompatibility:
 functions `scar_atoi`, `parse_batch`, `scar_alloc_copy`, `scar_log` (ranks 14–19).
 Instruction models rank all four utility functions in the top-12 consistently.
 
-**Complementary coverage — ensemble potential.** Block + §17 max-score union would
-cover all 13 vulnerable functions: block contributes session_consume_frag;
-instruction models push utility functions above the cut.
+**Ensemble attempted and closed — see §19.**
 
 **Devign accuracy does not predict scarnet P/R.** §12 PDG slice (55.60% Devign, best
 scarnet tied at 84.6%) and §4d block (55.52% Devign, worst scarnet 69.2%) show that
@@ -2518,9 +2516,43 @@ vulnerable and clean complex functions.
 
 ---
 
+## §19 — Ensemble Scoring (max and mean across all models)
+
+**Result:** Neither ensemble strategy beats the best individual model.
+
+| Strategy | Hits | P@13 |
+|---|---|---|
+| Best individual (§13 / §17 / §12) | 11/13 | **84.6%** |
+| ENSEMBLE (max) | 10/13 | 76.9% |
+| ENSEMBLE (mean) | 9/13 | 69.2% |
+
+**Root cause — `dispatch` is the blocking false positive.**
+`dispatch` is one of 3 functions (along with `main` and `session_consume_frag`) that
+llvmlite cannot parse (LLVM 15 opaque pointer IR incompatibility). The block model gives
+`dispatch` a score of 78.3% — its highest false positive. Because no instruction model
+can score it, both max and mean ensembles inherit this score without counterweight.
+Max keeps it at 78.3% (rank 2). Mean keeps it at 78.3% (one data point, no dilution).
+
+In both ensembles, `dispatch` displaces a true positive from the top-13.
+
+**Mean ensemble is additionally worse** because it dilutes clean high-confidence signals:
+`session_frag` (82.2% max → ~72% mean), `parse_batch` (76% → ~60%). The best
+instruction models are confident on the right functions; averaging with weaker models
+degrades that confidence without suppressing the FP.
+
+**Conclusion:** The ensemble chapter is closed. The path to improvement is:
+
+1. **Fix the llvmlite coverage gap:** compile with `-Xclang -no-opaque-pointers` so all
+   models score all 19 functions. With dispatch also scored by instruction models (~47%)
+   the ensemble would suppress it. `session_consume_frag` would also become visible.
+2. **Accept 84.6% as the single-model practical ceiling** for the current architecture
+   family on scarnet, and pursue Pattern C/D experiments to improve model calibration.
+
+---
+
 ## Current Conclusion
 
-17 experiments across block-level, instruction-level, slice-based, contrastive, and feature-enriched GNNs on Devign. Every approach converges at the same ceiling: **~57–58% test accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%.
+19 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, and ensemble GNNs on Devign and scarnet. Every approach converges at the same ceiling: **~57–58% test accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%.
 
 The 7pp gap to CodeBERT is real and has three distinct causes:
 
