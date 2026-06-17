@@ -34,11 +34,13 @@ HuggingFace models (--fetch-hf downloads these automatically):
     model_slice_pdg.pt §12 PDG slice GNN
 
 Locally retrained models (not on HuggingFace — run the matching train script):
-    model_instr_v2.pt   python train_instr_v2.py   (needs data/*_instr_v2_graphs.pkl)
-    model_instr_v3.pt   python train_instr_v3.py   (needs data/*_instr_v3_graphs.pkl)
-    model_instr_v4.pt   python train_instr_v4.py   (needs data/*_instr_v4_graphs.pkl)
-    model_instr_v5.pt   python train_instr_v5.py   (needs data/*_instr_v5_graphs.pkl)
-    model_instr_v6.pt   python train_instr_v6.py   (needs data/*_instr_v6_graphs.pkl)
+    model_instr_v2.pt        python train_instr_v2.py        (needs data/*_instr_v2_graphs.pkl)
+    model_instr_v3.pt        python train_instr_v3.py        (needs data/*_instr_v3_graphs.pkl)
+    model_instr_v4.pt        python train_instr_v4.py        (needs data/*_instr_v4_graphs.pkl)
+    model_instr_v5.pt        python train_instr_v5.py        (needs data/*_instr_v5_graphs.pkl)
+    model_instr_v6.pt        python train_instr_v6.py        (needs data/*_instr_v6_graphs.pkl)
+    model_bigvul_cls.pt      python train_bigvul_cls.py      (needs preprocess_bigvul_cls.py first)
+    model_bigvul_combined.pt python train_bigvul_cls.py --combine-devign
 """
 
 import argparse
@@ -249,6 +251,20 @@ REGISTRY = [
         "devign":     "56.48%",
         "preprocess": _pp_slice_pdg,
         "load_model": _load_pdg,
+    },
+    {
+        "checkpoint": "model_bigvul_cls.pt",
+        "label":      "§21  BigVul binary classifier",
+        "devign":     "—",
+        "preprocess": _pp_instr_v2,
+        "load_model": _load_instr_auto,
+    },
+    {
+        "checkpoint": "model_bigvul_combined.pt",
+        "label":      "§21  BigVul+Devign combined",
+        "devign":     "—",
+        "preprocess": _pp_instr_v2,
+        "load_model": _load_instr_auto,
     },
 ]
 

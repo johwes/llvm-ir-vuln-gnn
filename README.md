@@ -39,6 +39,7 @@ Full GNN training pipeline. Each script corresponds to one experiment series:
 | `preprocess_bigvul.py` + `train_triplet.py` | Block-level triplet contrastive (§6) | BigVul |
 | `preprocess_instr_bigvul.py` + `train_instr_triplet.py` | Instruction triplet (§8) | BigVul |
 | `train_instr_focal.py` | Focal Contrastive Loss + SAGPooling (§10b) | BigVul |
+| `preprocess_bigvul_cls.py` + `train_bigvul_cls.py` | §21 Standard binary classifier; `--combine-devign` for joint training | BigVul (+ Devign) |
 | `eval_all_models.py` | Score all checkpoints against any IR corpus | — |
 | `scan_ir.py` | Score a single IR file with one model | — |
 
