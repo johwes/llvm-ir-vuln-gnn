@@ -32,7 +32,7 @@ vulnerability triage pipelines.
 block-level representation and runs fastest at inference. `model_instr.pt` achieves the
 highest Devign accuracy.
 
-### Latest experiments (§13–§15, not yet uploaded)
+### Experiments §13–§15
 
 §13 added Perfograph constant encoding (`sign(C)*log2(|C|+1)`) and categorical call targets
 (5 danger categories: Alloc/Copy/String/FileIO/Network) to the instruction-level model.
@@ -65,8 +65,8 @@ Scripts: `preprocess_instr_v4.py`, `train_instr_v4.py`.
 
 ### model_instr.pt / model_slice.pt / model_slice_pdg.pt — Instruction-level GNNs
 
-- **Architecture:** Embedding lookup (vocab=110 opcodes) → two `RGCNConv` layers
-  (3 relation types: CFG, DFG, call) → AttentionalAggregation → binary classifier
+- **Architecture:** Embedding lookup (vocab=111 opcodes) → two `RGCNConv` layers
+  (3 relation types: CFG, DFG, Global) → AttentionalAggregation → binary classifier
 - **Input:** same IR compilation; each instruction becomes a node (opcode ID)
 - **Parameters:** ~256 KB (`hidden=64`)
 
@@ -89,6 +89,9 @@ Training: Adam lr=1e-3, StepLR decay (γ=0.5, step=10).
 | **model_instr.pt — InstrGNN instruction-level** | **56.53%** |
 | **model_slice.pt — SliceGNN DFG slice** | **55.60%** |
 | **model_slice_pdg.pt — SlicePDGGNN PDG slice** | **56.48%** |
+| §13 best run (Perfograph + call targets, not uploaded) | 58.75% |
+| §14 VSDG state edges (not uploaded) | 57.47% |
+| §15 register name embedding (not uploaded) | 57.47% |
 | CodeBERT (source text) | 63.43% |
 
 All results on Devign test set. The 1.24 pp gap over baseline is modest on Devign's
