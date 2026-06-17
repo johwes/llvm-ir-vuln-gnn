@@ -446,15 +446,21 @@ def _setup_scarnet_ir(keep_ir: Path | None) -> tuple[Path, Path]:
         raise RuntimeError(f"git clone failed: {e}") from e
 
     compiled = 0
+    skipped  = 0
     for rel in _SCARNET_SRCS:
         c_file = clone_dir / rel
         base   = rel.replace("/", "_").removesuffix(".c")
         ll_out = ir_dir / f"{base}.ll"
 
+        if ll_out.exists():
+            print(f"  compiling {rel:<30} ... reusing cached IR")
+            skipped += 1
+            compiled += 1
+            continue
+
         print(f"  compiling {rel:<30} ...", end=" ", flush=True)
         result = subprocess.run(
             ["clang", "-O0", "-fno-inline", "-S", "-emit-llvm",
-             "-Xclang", "-no-opaque-pointers",  # emit LLVM-14 typed-pointer IR for llvmlite
              "-I", str(clone_dir / "include"),
              "-o", str(ll_out), str(c_file)],
             capture_output=True,
@@ -467,7 +473,8 @@ def _setup_scarnet_ir(keep_ir: Path | None) -> tuple[Path, Path]:
             if result.stderr:
                 print(f"    {result.stderr.decode(errors='replace').strip()}")
 
-    print(f"  {compiled}/{len(_SCARNET_SRCS)} source files compiled → {ir_dir}\n")
+    note = f" ({skipped} reused from cache)" if skipped else ""
+    print(f"  {compiled}/{len(_SCARNET_SRCS)} source files compiled → {ir_dir}{note}\n")
     return ir_dir, tmpdir
 
 
