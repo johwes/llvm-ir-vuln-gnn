@@ -259,15 +259,40 @@ REGISTRY = [
 
 _FN_NAME_RE    = re.compile(r'@([\w.$]+)\s*\(')
 _FUNC_CLOSE_RE = re.compile(r'^\}', re.MULTILINE)
+# Linkage/visibility keywords that are not valid on declare stubs
+_DECL_STRIP_KW = re.compile(
+    r'\b(?:dso_local|dso_preemptable|internal|private|linkonce_odr|linkonce|'
+    r'weak_odr|weak|appending|available_externally|extern_weak|common|'
+    r'unnamed_addr|local_unnamed_addr)\b\s*')
+
+
+def _define_to_declare(define_text: str) -> str | None:
+    """Convert the first line of a define block into a declare stub.
+
+    Used to give sibling functions (defined later in the same .ll file) a
+    forward declaration so llvmlite can parse a per-function synthetic module
+    that calls them.
+    """
+    line = define_text.split('\n')[0].strip()
+    if not line.startswith('define'):
+        return None
+    line = 'declare' + line[6:]                          # define → declare
+    line = _DECL_STRIP_KW.sub('', line)                  # drop linkage keywords
+    line = re.sub(r'\)\s*(?:#\d+\s*)*\{?\s*$', ')', line)  # strip attrs + {
+    line = re.sub(r'\s+%[\w.$]+(?=\s*[,)])', '', line)   # strip param names
+    return line.strip()
 
 
 def _split_functions(ir_text: str) -> list[tuple[str, str]]:
     """Split a .ll file into (fn_name, fn_ir_text) pairs, one per define.
 
-    Each fn_ir_text is a complete synthetic module: all non-define lines from
-    the original file (type declarations, declare statements, attributes,
-    metadata) plus only this function's define block. This lets llvmlite parse
-    functions that reference named struct types or external declares.
+    Each fn_ir_text is a complete synthetic module so llvmlite can parse it:
+      - module_ctx: all non-define lines (type defs, external declares,
+        attribute groups, metadata) plus trailing content after each '}'
+      - sibling declares: declare stubs for every other function defined in
+        the same .ll file — needed when one function calls a sibling defined
+        later (clang emits no separate declare for same-unit calls)
+      - this function's define block
 
     clang emits declare/attribute/metadata lines AFTER the last function body,
     so each define segment is split at its first column-0 '}'; the trailing
@@ -280,14 +305,11 @@ def _split_functions(ir_text: str) -> list[tuple[str, str]]:
 
     for seg in segs:
         if not seg.lstrip().startswith("define"):
-            # Preamble: target triple, type defs, globals, …
             module_ctx_parts.append(seg)
             continue
-        # In LLVM IR, '}' at column 0 always closes the function body.
         close = _FUNC_CLOSE_RE.search(seg)
         if close:
             define_blocks.append(seg[:close.end()].strip())
-            # Everything after '}' is module-level (declares, attr groups, metadata)
             module_ctx_parts.append(seg[close.end():])
         else:
             define_blocks.append(seg.strip())
@@ -295,12 +317,17 @@ def _split_functions(ir_text: str) -> list[tuple[str, str]]:
     module_ctx = "".join(module_ctx_parts)
 
     result = []
-    for define_text in define_blocks:
+    for i, define_text in enumerate(define_blocks):
         m = _FN_NAME_RE.search(define_text[:300])
         if not m:
             continue
-        # Synthetic complete module: context (types/declares/attrs) + this function only
-        full_ir = module_ctx + "\n" + define_text
+        # Declare stubs for sibling functions (all other defines in this file).
+        # Without these, calls to same-file siblings are "use of undefined value".
+        sibling_decls = "\n".join(
+            d for j, blk in enumerate(define_blocks)
+            if j != i and (d := _define_to_declare(blk))
+        )
+        full_ir = module_ctx + "\n" + sibling_decls + "\n" + define_text
         result.append((m.group(1), full_ir))
     return result
 
