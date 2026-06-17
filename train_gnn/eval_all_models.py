@@ -422,7 +422,7 @@ _SCARNET_SRCS  = [
 ]
 
 
-def _setup_scarnet_ir(keep_ir: Path | None) -> tuple[Path, Path]:
+def _setup_scarnet_ir(keep_ir: Path | None, clang: str = "clang-20") -> tuple[Path, Path]:
     """Clone johwes/scarnet and compile every C source to LLVM IR.
 
     Returns (ir_dir, tmpdir) where tmpdir must be deleted by the caller when done.
@@ -460,7 +460,7 @@ def _setup_scarnet_ir(keep_ir: Path | None) -> tuple[Path, Path]:
 
         print(f"  compiling {rel:<30} ...", end=" ", flush=True)
         result = subprocess.run(
-            ["clang", "-O0", "-fno-inline", "-S", "-emit-llvm",
+            [clang, "-O0", "-fno-inline", "-S", "-emit-llvm",
              "-I", str(clone_dir / "include"),
              "-o", str(ll_out), str(c_file)],
             capture_output=True,
@@ -508,6 +508,11 @@ def main():
                     help="Directory containing .pt checkpoint files (default: script dir)")
     ap.add_argument("--summary-only", action="store_true",
                     help="Print only the summary table, skip per-model ranked lists")
+    ap.add_argument("--clang",        default="clang-20", metavar="BIN",
+                    help="clang binary to use for --scarnet compilation "
+                         "(default: clang-20; must match the LLVM version llvmlite "
+                         "was built against — check with: python -c \"import "
+                         "llvmlite.binding as l; print(l.llvm_version_info)\")")
     args = ap.parse_args()
 
     if args.keep_ir and not args.scarnet:
@@ -523,12 +528,12 @@ def main():
 
     # -- Resolve IR source -------------------------------------------------------
     if args.scarnet:
-        for tool in ("git", "clang"):
+        for tool in ("git", args.clang):
             if not shutil.which(tool):
                 print(f"ERROR: {tool} not found in PATH (required for --scarnet)")
                 sys.exit(1)
         keep_ir = Path(args.keep_ir) if args.keep_ir else None
-        ir_path, tmpdir = _setup_scarnet_ir(keep_ir)
+        ir_path, tmpdir = _setup_scarnet_ir(keep_ir, clang=args.clang)
     else:
         ir_path = Path(args.ir_dir)
         if not ir_path.exists():
