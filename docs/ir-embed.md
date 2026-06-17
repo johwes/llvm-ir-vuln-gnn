@@ -2581,31 +2581,31 @@ pursuing an ensemble that can match but not exceed the best individual model.
 **Ground truth:** 1 known-vulnerable function — `deflate_stored` (CVE-2018-25032:
 out-of-bounds write when output buffer is near-exhausted with non-compressible input;
 unpatched in v1.2.11, fixed in v1.2.12)  
-**Method:** `eval_all_models.py --ir-dir /tmp/zlib-ir/` (no answer key during run;
-answer key at `zlib-answer-key.txt` used post-hoc)  
+**Method:** `eval_all_models.py --ir-dir /tmp/zlib-ir/ --answer-key zlib-v1.2.11-answer-key.txt --top-k 10`  
 **Compilation:** `./configure && clang-20 -O0 -fno-inline -S -emit-llvm -I. <file>.c`
 
 With only one ground-truth function, **rank** and **MRR** (mean reciprocal rank) are
-the appropriate metrics. Random-ranker baseline MRR for 1 item in 148: H(148)/148 ≈ 0.038.
+the appropriate metrics alongside P@10. Random-ranker baseline MRR for 1 item in 148:
+H(148)/148 ≈ 0.038.
 
 ### Per-model results
 
-| Model | Section | Rank / 148 | Score | MRR |
-|---|---|---|---|---|
-| `model_instr_v4.pt` | §15 reg names | **2** | 83.7% | **0.500** |
-| `model_instr.pt` | §7 instr baseline | **4** | 79.2% | 0.250 |
-| `model_instr_v3.pt` | §14 VSDG | **7** | 67.0% | 0.143 |
-| `model_slice_pdg.pt` | §12 PDG slice | **10** | 63.8% | 0.100 |
-| `model_instr_v6.pt` | §17 taint | **13** | 61.6% | 0.077 |
-| `model_instr_v5.pt` | §16 static flags | **22** | 65.0% | 0.045 |
-| `model.pt` | §4d block | **30** | 51.6% | 0.033 |
-| `model_instr_v2.pt` | §13 Perfograph | **31** | 65.9% | 0.032 |
-| `model_slice.pt` | §11 DFG slice | **63** | 53.7% | 0.016 |
-| ENSEMBLE (mean) | — | **7** | 65.7% | 0.143 |
-| ENSEMBLE (max) | — | **10** | 83.7% | 0.100 |
+| Model | Section | Rank / 148 | Score | MRR | P@10 | R@10 |
+|---|---|---|---|---|---|---|
+| `model_instr_v4.pt` | §15 reg names | **2** | 83.7% | **0.500** | 10.0% | **100%** |
+| `model_instr.pt` | §7 instr baseline | **4** | 79.2% | 0.250 | 10.0% | **100%** |
+| `model_instr_v3.pt` | §14 VSDG | **7** | 67.0% | 0.143 | 10.0% | **100%** |
+| `model_slice_pdg.pt` | §12 PDG slice | **10** | 63.8% | 0.100 | 10.0% | **100%** |
+| `model_instr_v6.pt` | §17 taint | 13 | 61.6% | 0.077 | 0.0% | 0% |
+| `model_instr_v5.pt` | §16 static flags | 22 | 65.0% | 0.045 | 0.0% | 0% |
+| `model.pt` | §4d block | 30 | 51.6% | 0.033 | 0.0% | 0% |
+| `model_instr_v2.pt` | §13 Perfograph | 31 | 65.9% | 0.032 | 0.0% | 0% |
+| `model_slice.pt` | §11 DFG slice | 63 | 53.7% | 0.016 | 0.0% | 0% |
+| ENSEMBLE (mean) | — | **7** | 65.7% | 0.143 | 10.0% | **100%** |
+| ENSEMBLE (max) | — | **10** | 83.7% | 0.100 | 10.0% | **100%** |
 
 **Mean MRR (9 classifiers): 0.133 — 3.5× random baseline (0.038)**  
-Median rank: 13. P@10: 4/9 models (44%). P@20: 6/9 (67%).
+Median rank: 13. R@10=100% for 4/9 models (44%) and both ensembles.
 
 ### Key findings
 
