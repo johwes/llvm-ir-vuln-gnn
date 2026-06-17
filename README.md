@@ -1,9 +1,10 @@
-# IR Structural Embedding — GNN Vulnerability Detection
+# GNN Vulnerability Detector — LLVM IR Experiments
 
 Research into whether LLVM IR graph structure alone can classify vulnerable C functions,
 without access to source identifiers, type names, or string literals.
 
-Full experimental record: **[docs/ir-embed.md](docs/ir-embed.md)**
+**Models:** [`johnnywesterlund/scar-gnn-defect-detector`](https://huggingface.co/johnnywesterlund/scar-gnn-defect-detector) on Hugging Face  
+**Full experimental record:** [docs/ir-embed.md](docs/ir-embed.md) — includes TL;DR and plain-language explanation of results
 
 ---
 
@@ -26,21 +27,20 @@ Full GNN training pipeline. Each script corresponds to one experiment series:
 
 | Script | Experiment | Dataset |
 |---|---|---|
-| `preprocess.py` | Block-level graph extraction | Devign |
-| `train.py` | Block-level GCN/RGCN classifier | Devign |
-| `preprocess_instr.py` | Instruction-level graph extraction | Devign |
-| `train_instr.py` | Instruction-level GNN classifier (§7, §10a) | Devign |
-| `preprocess_slice.py` | DFG backward-slice graph extraction (§11) | Devign |
-| `train_slice.py` | DFG slice GNN classifier (§11) | Devign |
-| `preprocess_slice_pdg.py` | PDG slice graph extraction (§12) | Devign |
-| `train_slice_pdg.py` | PDG slice GNN classifier (§12) | Devign |
-| `preprocess_bigvul.py` | Block-level pair extraction | BigVul |
-| `train_triplet.py` | Block-level triplet contrastive (§6) | BigVul |
-| `preprocess_instr_bigvul.py` | Instruction-level pair extraction | BigVul |
-| `train_instr_triplet.py` | Instruction-level triplet contrastive (§8) | BigVul |
+| `preprocess.py` + `train.py` | Block-level GCN/RGCN classifier (§4) | Devign |
+| `preprocess_instr.py` + `train_instr.py` | Instruction-level baseline (§7) | Devign |
+| `preprocess_instr_v2.py` + `train_instr_v2.py` | §13 Perfograph + call categories | Devign |
+| `preprocess_instr_v3.py` + `train_instr_v3.py` | §14 VSDG memory ordering edges | Devign |
+| `preprocess_instr_v4.py` + `train_instr_v4.py` | §15 Register name embedding | Devign |
+| `preprocess_instr_v5.py` + `train_instr_v5.py` | §16 Static analysis flags | Devign |
+| `preprocess_instr_v6.py` + `train_instr_v6.py` | §17 Taint propagation | Devign |
+| `preprocess_slice.py` + `train_slice.py` | DFG backward-slice GNN (§11) | Devign |
+| `preprocess_slice_pdg.py` + `train_slice_pdg.py` | PDG slice GNN (§12) | Devign |
+| `preprocess_bigvul.py` + `train_triplet.py` | Block-level triplet contrastive (§6) | BigVul |
+| `preprocess_instr_bigvul.py` + `train_instr_triplet.py` | Instruction triplet (§8) | BigVul |
 | `train_instr_focal.py` | Focal Contrastive Loss + SAGPooling (§10b) | BigVul |
-| `scan_ir.py` | Inference: score a new IR file with `model.pt` | — |
-| `debug_predicate.py` | Verify icmp/fcmp predicate extraction via llvmlite | — |
+| `eval_all_models.py` | Score all checkpoints against any IR corpus | — |
+| `scan_ir.py` | Score a single IR file with one model | — |
 
 See `train_gnn/MODEL_CARD.md` for the deployed model spec and HuggingFace upload
 instructions (`hf_upload.py`).
@@ -49,31 +49,34 @@ instructions (`hf_upload.py`).
 
 ## Results summary
 
+### Devign benchmark (20 experiments)
+
 | Experiment | Test Acc | Notes |
 |---|---|---|
 | Majority-class baseline | 56.6% | |
-| Block-level GCNConv | 55.04% | |
-| Block-level RGCNConv + DFG | 56.08% | |
-| **Block-level best (60ep, h=128)** | **57.84%** | pipeline deliverable (`model.pt`) |
-| CodeBERT (Colab T4) | 63.43% | upper bound with source tokens |
-| Instruction-level GNN (§7) | 58.00% | first to clear block ceiling |
-| BigVul block-level triplet k-NN (§6) | 51.21% | soft collapse, pair-sim ↑ |
-| BigVul instr-level triplet k-NN (§8) | 48.39% | soft collapse, pair-sim 0.9984→0.9995 ↑ |
-| §10a: enriched vocab classifier | 56.85% | below §7 — vocab enrichment insufficient alone |
-| §10b: FCL + SAGPooling | 47.58% k-NN | collapse (pair-sim 0.9992 ↑); contrastive branch closed |
-| §11: DFG backward-slice GNN (30ep, h=64) | 56.64% | DFG slice misses guard conditions |
-| §12: PDG slice GNN (30ep, h=64) | 56.48% | control deps added; no accuracy gain over §11 |
+| Block-level best — §4d (`model.pt`) | 57.84% | pipeline deliverable |
+| Instruction-level baseline — §7 (`model_instr.pt`) | 58.00% | first to clear block ceiling |
+| §11 DFG slice (`model_slice.pt`) | 56.64% | |
+| §12 PDG slice (`model_slice_pdg.pt`) | 56.48% | best real-world result (see below) |
+| §13 Perfograph + call categories (`model_instr_v2.pt`) | **58.75%** | best Devign accuracy |
+| §14 VSDG memory ordering edges | 57.47% | |
+| §15 Register name embedding | 57.47% | best zlib CVE rank (see below) |
+| §16 Static analysis flags | 57.15% | |
+| §17 Taint propagation | 58.00% | |
+| CodeBERT (reference) | 63.43% | reads C source with identifier names |
 
-**GNN structural ceiling: ~57–58%** across all 12 experiments. Every architectural variant —
-relational edges, semantic features, slice graphs, contrastive objectives — converges to the
-same range. Closing the ~5.6pp gap to CodeBERT requires identifier-augmented features or
-LLM pretraining on source tokens.
+**Ceiling: ~57–58%** across all architectures. The gap to CodeBERT is structural — LLVM IR discards variable names and string literals before the model sees anything. See [docs/ir-embed.md](docs/ir-embed.md) for the full analysis.
 
-**Deployed models:** See `train_gnn/MODEL_CARD.md` for all four checkpoints on HuggingFace
-(`model.pt`, `model_instr.pt`, `model_slice.pt`, `model_slice_pdg.pt`).
+### Real-world evaluation
 
-**Why CodeBERT wins by +5.6pp:** it sees identifier names and type tokens.
-Our GNN discards all identifiers — only opcode categories survive in LLVM IR graphs.
+| Corpus | Metric | Best result |
+|---|---|---|
+| scarnet (19 functions, 13 known-vulnerable) | P/R @13 | **84.6%** — §12 PDG slice (11/13 found) |
+| zlib v1.2.11 (148 functions, CVE-2018-25032) | Rank of `deflate_stored` | **rank 2/148** — §15; top-10 in 4/9 models |
+
+**Deployed models:** `model.pt`, `model_instr.pt`, `model_slice.pt`, `model_slice_pdg.pt` —
+see [`train_gnn/MODEL_CARD.md`](train_gnn/MODEL_CARD.md) and
+[HuggingFace](https://huggingface.co/johnnywesterlund/scar-gnn-defect-detector).
 
 ---
 
@@ -84,14 +87,16 @@ All commands run from `train_gnn/`.
 **System dependencies** (clang must be in PATH):
 ```bash
 # Debian/Ubuntu
-apt install clang-14 llvm-14
+apt install clang llvm
 
 # macOS
-brew install llvm@14
-export PATH="$(brew --prefix llvm@14)/bin:$PATH"
+brew install llvm
+export PATH="$(brew --prefix llvm)/bin:$PATH"
 ```
 
-`llvmlite` ships with a bundled LLVM 14 for graph parsing. Clang 14 is the safest match; clang 15–17 work in practice but are not tested.
+`llvmlite` ships with a bundled LLVM. Tested with clang-20 / llvmlite 0.47.0 (LLVM 20).
+Clang 14–20 all work for compilation; use `--clang clang-20` with `eval_all_models.py`
+if multiple versions are installed.
 
 **Python dependencies:**
 ```bash
@@ -190,31 +195,40 @@ python scan_ir.py /tmp/target.ll
 
 ## Evaluating on real codebases
 
-Two scripts score the model against known-vulnerable real C code, requiring only
-`clang` in PATH and `model.pt` present in `train_gnn/`.
+`eval_all_models.py` scores every checkpoint against any directory of `.ll` IR files
+and ranks functions by suspicion score. With an answer key it computes P@K and R@K.
 
-### `eval_scar_test_c.sh` — scar-test-c (CWE benchmark)
-
-Clones [johwes/scar-test-c](https://github.com/johwes/scar-test-c), compiles
-7 known-vulnerable files (double-free, null-deref, OOB read, uninit, div-zero,
-stack overflow, signed overflow) plus one clean synthetic function, and checks
-whether the model predicts each correctly.
+### scarnet — planted-bug server (13 known-vulnerable functions)
 
 ```bash
-bash eval_scar_test_c.sh
-bash eval_scar_test_c.sh --model /path/to/other.pt
+# Auto-clones johwes/scarnet, compiles, scores all 9 checkpoints
+python eval_all_models.py --scarnet --answer-key scarnet-answer-key.txt
+
+# Reuse previously compiled IR
+python eval_all_models.py --ir-dir /tmp/scarnet-ir/ --answer-key scarnet-answer-key.txt
 ```
 
-### `eval_scarnet.sh` — scarnet (planted-bug server)
-
-Clones [johwes/scarnet](https://github.com/johwes/scarnet), compiles all source
-files, scores every function with `scan_ir.py --all-functions`, and ranks them
-by vulnerability score. Cross-references the ranked list against 13 known-vulnerable
-functions to report how many land in the top-13.
+### zlib v1.2.11 — real library with a known CVE
 
 ```bash
-bash eval_scarnet.sh
-bash eval_scarnet.sh --model /path/to/other.pt
+# Compile zlib first (generates zconf.h required before compilation)
+git clone --depth 1 --branch v1.2.11 https://github.com/madler/zlib /tmp/zlib-1.2.11
+cd /tmp/zlib-1.2.11 && ./configure
+mkdir -p /tmp/zlib-ir
+for f in *.c; do
+    clang-20 -O0 -fno-inline -S -emit-llvm -I. "$f" -o "/tmp/zlib-ir/${f%.c}.ll"
+done
+
+# Score all checkpoints; CVE-2018-25032 answer key included in this repo
+python eval_all_models.py \
+    --ir-dir /tmp/zlib-ir/ \
+    --answer-key zlib-v1.2.11-answer-key.txt \
+    --top-k 10
 ```
 
-Both scripts clone into a temp directory and clean up after themselves.
+### Any other codebase
+
+```bash
+# Compile to IR, then score
+python eval_all_models.py --ir-dir /path/to/ir/ [--answer-key key.txt] [--top-k N]
+```
