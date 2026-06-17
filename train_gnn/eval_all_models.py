@@ -116,10 +116,11 @@ def _load_instr_auto(path: Path) -> tuple[nn.Module, object]:
 
     vocab_size    = ckpt["embed.weight"].shape[0]
     embed_dim     = ckpt["embed.weight"].shape[1]
-    hidden        = ckpt["conv2.weight"].shape[0]
-    # RGCNConv weight shape: (num_relations, out_channels, in_channels)
+    # RGCNConv weight shape: (num_relations, in_channels, out_channels)
     num_relations = ckpt["conv1.weight"].shape[0]
-    conv1_in      = ckpt["conv1.weight"].shape[2]
+    conv1_in      = ckpt["conv1.weight"].shape[1]   # in_channels (NOT shape[2])
+    # lin = Linear(hidden, 1) → weight shape (1, hidden); safest way to read hidden
+    hidden        = ckpt["lin.weight"].shape[1]
     extra         = conv1_in - embed_dim
     has_name      = "name_embed.weight" in ckpt
 
@@ -157,9 +158,9 @@ def _load_instr_auto(path: Path) -> tuple[nn.Module, object]:
 
 def _load_slice(path: Path) -> nn.Module:
     ckpt = torch.load(path, map_location="cpu", weights_only=True)
-    vocab_size = ckpt["embed.weight"].shape[0]  # infer; avoids mismatch if retrained
+    vocab_size = ckpt["embed.weight"].shape[0]
     embed_dim  = ckpt["embed.weight"].shape[1]
-    hidden     = ckpt["conv2.weight"].shape[0]
+    hidden     = ckpt["lin.weight"].shape[1]   # Linear(hidden,1) → weight (1,hidden)
     m = _m_slice.SliceGNN(vocab_size, embed_dim, hidden)
     m.load_state_dict(ckpt)
     return m.eval()
@@ -169,7 +170,7 @@ def _load_pdg(path: Path) -> nn.Module:
     ckpt = torch.load(path, map_location="cpu", weights_only=True)
     vocab_size = ckpt["embed.weight"].shape[0]
     embed_dim  = ckpt["embed.weight"].shape[1]
-    hidden     = ckpt["conv2.weight"].shape[0]
+    hidden     = ckpt["lin.weight"].shape[1]
     m = _m_pdg.SlicePDGGNN(vocab_size, embed_dim, hidden)
     m.load_state_dict(ckpt)
     return m.eval()
