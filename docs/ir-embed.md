@@ -2,7 +2,7 @@
 
 **Code:** `experiments/ir_embed_demo/`  
 **Hypothesis:** `docs/research.md` — Contrastive structural embeddings over LLVM IR  
-**Status:** **COMPLETE (19 experiments).** §7 instruction-level GNN: 58.00%; §8 BigVul instr-level triplet collapsed (pair-sim 0.9984→0.9995); §9 scarnet real-world validation: 10/13 known-vulnerable functions in top-13 of 19 (77% P/R, -O0 -fno-inline). §10b FCL+SAGPooling: 47.58% k-NN, pair-sim 0.9992 — **contrastive learning branch closed** (3/3 experiments collapsed; structural invariance of patches is the binding constraint). Deployed as zero-cost ranker. Three semantic false negatives (format string, null deref, off-by-one) are LLM domain. Pipeline deliverable: block-level GNN 57.84% (`model.pt`). §13 Tier 1 features (Perfograph + call categorization): instruction-level best 58.75% (+0.75pp over §7), block-level 56.75% (below §4d baseline). §14 VSDG memory ordering edges: 57.47% (state edges add density without benefit). §15 register name embedding: 57.47% (name bucket hashing does not generalize across codebases). **IR feature engineering track closed — ceiling confirmed at ~57–58%.** §16 static analysis flags: 57.15% (14% coverage bottleneck). §17 taint propagation: 58.00% (+0.85pp), 82% ceiling miss rate. §18 full sweep on scarnet (19/19 functions, sibling-stub fix): **§12 PDG slice 84.6% P/R**; §13/§17 76.9%; §15/§16 61.5%; block model 69.2%. §19 ensemble (max and mean): neither beats best single model — dispatch FP (78.3%, block only) anchors both ensembles. 84.6% is the practical single-model ceiling.
+**Status:** **COMPLETE (20 experiments).** §7 instruction-level GNN: 58.00%; §8 BigVul instr-level triplet collapsed (pair-sim 0.9984→0.9995); §9 scarnet real-world validation: 10/13 known-vulnerable functions in top-13 of 19 (77% P/R, -O0 -fno-inline). §10b FCL+SAGPooling: 47.58% k-NN, pair-sim 0.9992 — **contrastive learning branch closed** (3/3 experiments collapsed; structural invariance of patches is the binding constraint). Deployed as zero-cost ranker. Three semantic false negatives (format string, null deref, off-by-one) are LLM domain. Pipeline deliverable: block-level GNN 57.84% (`model.pt`). §13 Tier 1 features (Perfograph + call categorization): instruction-level best 58.75% (+0.75pp over §7), block-level 56.75% (below §4d baseline). §14 VSDG memory ordering edges: 57.47% (state edges add density without benefit). §15 register name embedding: 57.47% (name bucket hashing does not generalize across codebases). **IR feature engineering track closed — ceiling confirmed at ~57–58%.** §16 static analysis flags: 57.15% (14% coverage bottleneck). §17 taint propagation: 58.00% (+0.85pp), 82% ceiling miss rate. §18 full sweep on scarnet (19/19 functions, sibling-stub fix): **§12 PDG slice 84.6% P/R**; §13/§17 76.9%; §15/§16 61.5%; block model 69.2%. §19 ensemble (max and mean): neither beats best single model — dispatch FP (78.3%, block only) anchors both ensembles. 84.6% is the practical single-model ceiling. §20 zero-shot transfer to zlib v1.2.11 (148 functions): CVE-2018-25032 (`deflate_stored`) at median rank 13, mean MRR 0.133 (3.5× random); §15 best (rank 2). Transfer confirmed.
 
 ---
 
@@ -2574,9 +2574,71 @@ pursuing an ensemble that can match but not exceed the best individual model.
 
 ---
 
+## §20 — Zero-Shot Transfer to zlib v1.2.11
+
+**Date:** 2026-06-17  
+**Target:** `madler/zlib` tag v1.2.11, 148 functions across 15 `.c` files  
+**Ground truth:** 1 known-vulnerable function — `deflate_stored` (CVE-2018-25032:
+out-of-bounds write when output buffer is near-exhausted with non-compressible input;
+unpatched in v1.2.11, fixed in v1.2.12)  
+**Method:** `eval_all_models.py --ir-dir /tmp/zlib-ir/` (no answer key during run;
+answer key at `zlib-answer-key.txt` used post-hoc)  
+**Compilation:** `./configure && clang-20 -O0 -fno-inline -S -emit-llvm -I. <file>.c`
+
+With only one ground-truth function, **rank** and **MRR** (mean reciprocal rank) are
+the appropriate metrics. Random-ranker baseline MRR for 1 item in 148: H(148)/148 ≈ 0.038.
+
+### Per-model results
+
+| Model | Section | Rank / 148 | Score | MRR |
+|---|---|---|---|---|
+| `model_instr_v4.pt` | §15 reg names | **2** | 83.7% | **0.500** |
+| `model_instr.pt` | §7 instr baseline | **4** | 79.2% | 0.250 |
+| `model_instr_v3.pt` | §14 VSDG | **7** | 67.0% | 0.143 |
+| `model_slice_pdg.pt` | §12 PDG slice | **10** | 63.8% | 0.100 |
+| `model_instr_v6.pt` | §17 taint | **13** | 61.6% | 0.077 |
+| `model_instr_v5.pt` | §16 static flags | **22** | 65.0% | 0.045 |
+| `model.pt` | §4d block | **30** | 51.6% | 0.033 |
+| `model_instr_v2.pt` | §13 Perfograph | **31** | 65.9% | 0.032 |
+| `model_slice.pt` | §11 DFG slice | **63** | 53.7% | 0.016 |
+| ENSEMBLE (mean) | — | **7** | 65.7% | 0.143 |
+| ENSEMBLE (max) | — | **10** | 83.7% | 0.100 |
+
+**Mean MRR (9 classifiers): 0.133 — 3.5× random baseline (0.038)**  
+Median rank: 13. P@10: 4/9 models (44%). P@20: 6/9 (67%).
+
+### Key findings
+
+**Transfer is real.** Models trained exclusively on Devign (mixed OSS C code) rank the
+CVE function in the top 10 for 4 of 9 architectures on a completely new codebase,
+zero-shot. Top 3% for §7 (rank 4/148), top 5% for §14 (rank 7).
+
+**§15 register name embedding reverses its scarnet result.** Worst on scarnet (61.5%),
+best on zlib (rank 2, MRR 0.500). The likely reason: zlib uses production C naming
+conventions — `strm`, `have`, `left`, `buf`, `avail_out` — similar to the Devign corpus.
+scarnet uses more uniform/abstract variable names. Name features generalise to code that
+looks like training data but not to purpose-built benchmarks.
+
+**§11 DFG slice fails** (rank 63/148, MRR 0.016 — below random). DFG slicing without
+PDG edges loses the buffer-bound computation flow that makes `deflate_stored` suspicious.
+
+**`compressBound` calibration failure.** A trivial formula function (`sourceLen + (sourceLen >> 12) + ...`) ranks #1 in 4 models at 90–97%. No branches, no memory ops, tiny graph — the model mis-calibrates on structural outliers. Functions that are far from the Devign distribution in size/complexity get unpredictable scores regardless of actual risk.
+
+**Ensemble mean (rank 7) outperforms most individual models** on this corpus. Unlike
+scarnet — where ensemble hurt because one FP (dispatch at 78.3%) anchored the score —
+here the dominant FP (`compressBound`, ~74% mean score) is already above `deflate_stored`
+(~66%) in every individual model too, so averaging doesn't worsen rank.
+
+**CVEs patched in v1.2.11 are instructive:** `inflate_fast` (CVE-2016-9841 fixed here)
+ranks #1 in the block model at 100% — the model still considers it suspicious. `crc32_big`
+(CVE-2016-9843) ranks #2–#7 across several models. The model has no knowledge of the fix;
+it sees the same structurally complex code regardless of patch status.
+
+---
+
 ## Current Conclusion
 
-19 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, and ensemble GNNs on Devign and scarnet. Every approach converges at the same ceiling: **~57–58% test accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%.
+20 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, ensemble GNNs on Devign and scarnet, and zero-shot transfer to zlib v1.2.11. Every Devign-trained approach converges at the same ceiling: **~57–58% test accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%.
 
 The 7pp gap to CodeBERT is real and has three distinct causes:
 
