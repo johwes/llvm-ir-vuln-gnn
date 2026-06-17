@@ -257,7 +257,8 @@ REGISTRY = [
 # IR parsing
 # ---------------------------------------------------------------------------
 
-_FN_NAME_RE = re.compile(r'@([\w.$]+)\s*\(')
+_FN_NAME_RE    = re.compile(r'@([\w.$]+)\s*\(')
+_FUNC_CLOSE_RE = re.compile(r'^\}', re.MULTILINE)
 
 
 def _split_functions(ir_text: str) -> list[tuple[str, str]]:
@@ -267,19 +268,34 @@ def _split_functions(ir_text: str) -> list[tuple[str, str]]:
     the original file (type declarations, declare statements, attributes,
     metadata) plus only this function's define block. This lets llvmlite parse
     functions that reference named struct types or external declares.
+
+    clang emits declare/attribute/metadata lines AFTER the last function body,
+    so each define segment is split at its first column-0 '}'; the trailing
+    content joins module_ctx alongside the preamble.
     """
     segs = re.split(r'(?=^define\b)', ir_text, flags=re.MULTILINE)
-    defines = []
+
+    define_blocks    = []
     module_ctx_parts = []
+
     for seg in segs:
-        if seg.lstrip().startswith("define"):
-            defines.append(seg.strip())
-        else:
+        if not seg.lstrip().startswith("define"):
+            # Preamble: target triple, type defs, globals, …
             module_ctx_parts.append(seg)
+            continue
+        # In LLVM IR, '}' at column 0 always closes the function body.
+        close = _FUNC_CLOSE_RE.search(seg)
+        if close:
+            define_blocks.append(seg[:close.end()].strip())
+            # Everything after '}' is module-level (declares, attr groups, metadata)
+            module_ctx_parts.append(seg[close.end():])
+        else:
+            define_blocks.append(seg.strip())
+
     module_ctx = "".join(module_ctx_parts)
 
     result = []
-    for define_text in defines:
+    for define_text in define_blocks:
         m = _FN_NAME_RE.search(define_text[:300])
         if not m:
             continue
