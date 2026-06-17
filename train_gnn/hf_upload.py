@@ -31,6 +31,8 @@ UPLOADS = [
     ("train_instr_v2.py",      "train_instr_v2.py",      "Training script §13 (Perfograph + call targets)"),
     ("train_instr_v3.py",      "train_instr_v3.py",      "Training script §14 (VSDG memory ordering edges)"),
     ("train_instr_v4.py",      "train_instr_v4.py",      "Training script §15 (register name embedding)"),
+    ("train_instr_v5.py",      "train_instr_v5.py",      "Training script §16 (static analysis flags)"),
+    ("train_instr_v6.py",      "train_instr_v6.py",      "Training script §17 (taint propagation)"),
     ("train_slice.py",         "train_slice.py",         "Training script §11 (DFG slice)"),
     ("train_slice_pdg.py",     "train_slice_pdg.py",     "Training script §12 (PDG slice)"),
     # Preprocessing scripts
@@ -39,6 +41,8 @@ UPLOADS = [
     ("preprocess_instr_v2.py", "preprocess_instr_v2.py", "IR graph extractor §13 (Perfograph + call targets)"),
     ("preprocess_instr_v3.py", "preprocess_instr_v3.py", "IR graph extractor §14 (VSDG state edges)"),
     ("preprocess_instr_v4.py", "preprocess_instr_v4.py", "IR graph extractor §15 (register name embedding)"),
+    ("preprocess_instr_v5.py", "preprocess_instr_v5.py", "IR graph extractor §16 (static analysis flags)"),
+    ("preprocess_instr_v6.py", "preprocess_instr_v6.py", "IR graph extractor §17 (taint propagation)"),
     ("preprocess_slice.py",    "preprocess_slice.py",    "IR graph extractor §11 (DFG slice)"),
     ("preprocess_slice_pdg.py","preprocess_slice_pdg.py","IR graph extractor §12 (PDG slice)"),
     ("requirements.txt",       "requirements.txt",       "Python dependencies"),
