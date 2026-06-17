@@ -1,5 +1,5 @@
 ---
-language: c
+language: code
 license: mit
 tags:
   - vulnerability-detection
