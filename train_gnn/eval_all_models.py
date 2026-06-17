@@ -98,75 +98,75 @@ def _load_block(path: Path) -> nn.Module:
     return m.eval()
 
 
-def _load_instr_v1(path: Path) -> nn.Module:
+def _load_instr_auto(path: Path) -> nn.Module:
+    """Load any InstructionGNN checkpoint by detecting the architecture from weights.
+
+    Reads vocab_size, embed_dim, hidden, num_relations and extra input features
+    directly from the checkpoint tensor shapes instead of relying on the filename
+    or module constants.  This handles checkpoints that were saved to a different
+    filename than the script that produced them.
+
+    Detected variants:
+      has name_embed.weight          → v4 (register name embedding)
+      num_relations == 4             → v3 (VSDG state edges)
+      conv1_in == embed_dim          → v1 (opcode only)
+      conv1_in == embed_dim + 1      → v2 (+ constant magnitude)
+      conv1_in == embed_dim + 2      → v5/v6 (+ static flag / taint)
+    """
     ckpt = torch.load(path, map_location="cpu", weights_only=True)
-    embed_dim = ckpt["embed.weight"].shape[1]
-    hidden    = ckpt["conv2.weight"].shape[0]
-    m = _m_v1.InstructionGNN(_m_v1.VOCAB_SIZE, embed_dim, hidden)
-    m.load_state_dict(ckpt)
-    return m.eval()
 
+    vocab_size    = ckpt["embed.weight"].shape[0]
+    embed_dim     = ckpt["embed.weight"].shape[1]
+    hidden        = ckpt["conv2.weight"].shape[0]
+    # RGCNConv weight shape: (num_relations, out_channels, in_channels)
+    num_relations = ckpt["conv1.weight"].shape[0]
+    conv1_in      = ckpt["conv1.weight"].shape[2]
+    extra         = conv1_in - embed_dim
+    has_name      = "name_embed.weight" in ckpt
 
-def _load_instr_v2(path: Path) -> nn.Module:
-    ckpt = torch.load(path, map_location="cpu", weights_only=True)
-    embed_dim = ckpt["embed.weight"].shape[1]
-    hidden    = ckpt["conv2.weight"].shape[0]
-    m = _m_v2.InstructionGNN(_m_v2.VOCAB_SIZE, embed_dim, hidden)
-    m.load_state_dict(ckpt)
-    return m.eval()
+    if has_name:
+        name_embed_dim = ckpt["name_embed.weight"].shape[1]
+        variant = f"v4 (name_embed, in={conv1_in}, rels={num_relations})"
+        m = _m_v4.InstructionGNN(vocab_size, embed_dim, hidden, name_embed_dim)
+    elif num_relations == 4:
+        variant = f"v3 (VSDG state edges, in={conv1_in}, rels=4)"
+        m = _m_v3.InstructionGNN(vocab_size, embed_dim, hidden)
+    elif extra == 0:
+        variant = f"v1 (opcode only, in={conv1_in}, rels={num_relations})"
+        m = _m_v1.InstructionGNN(vocab_size, embed_dim, hidden)
+    elif extra == 1:
+        variant = f"v2 (+ const_mag, in={conv1_in}, rels={num_relations})"
+        m = _m_v2.InstructionGNN(vocab_size, embed_dim, hidden)
+    elif extra == 2:
+        variant = f"v5/v6 (+ flag/taint, in={conv1_in}, rels={num_relations})"
+        m = _m_v5.InstructionGNN(vocab_size, embed_dim, hidden)
+    else:
+        raise ValueError(
+            f"Unrecognised InstructionGNN shape: vocab={vocab_size}, "
+            f"embed={embed_dim}, hidden={hidden}, conv1_in={conv1_in}, "
+            f"relations={num_relations}")
 
-
-def _load_instr_v3(path: Path) -> nn.Module:
-    ckpt = torch.load(path, map_location="cpu", weights_only=True)
-    embed_dim = ckpt["embed.weight"].shape[1]
-    hidden    = ckpt["conv2.weight"].shape[0]
-    m = _m_v3.InstructionGNN(_m_v3.VOCAB_SIZE, embed_dim, hidden)
-    m.load_state_dict(ckpt)
-    return m.eval()
-
-
-def _load_instr_v4(path: Path) -> nn.Module:
-    ckpt = torch.load(path, map_location="cpu", weights_only=True)
-    embed_dim      = ckpt["embed.weight"].shape[1]
-    hidden         = ckpt["conv2.weight"].shape[0]
-    name_embed_dim = ckpt["name_embed.weight"].shape[1]
-    m = _m_v4.InstructionGNN(_m_v4.VOCAB_SIZE, embed_dim, hidden, name_embed_dim)
-    m.load_state_dict(ckpt)
-    return m.eval()
-
-
-def _load_instr_v5(path: Path) -> nn.Module:
-    ckpt = torch.load(path, map_location="cpu", weights_only=True)
-    embed_dim = ckpt["embed.weight"].shape[1]
-    hidden    = ckpt["conv2.weight"].shape[0]
-    m = _m_v5.InstructionGNN(_m_v5.VOCAB_SIZE, embed_dim, hidden)
-    m.load_state_dict(ckpt)
-    return m.eval()
-
-
-def _load_instr_v6(path: Path) -> nn.Module:
-    ckpt = torch.load(path, map_location="cpu", weights_only=True)
-    embed_dim = ckpt["embed.weight"].shape[1]
-    hidden    = ckpt["conv2.weight"].shape[0]
-    m = _m_v6.InstructionGNN(_m_v6.VOCAB_SIZE, embed_dim, hidden)
+    print(f"    detected {variant}, vocab={vocab_size}, hidden={hidden}")
     m.load_state_dict(ckpt)
     return m.eval()
 
 
 def _load_slice(path: Path) -> nn.Module:
     ckpt = torch.load(path, map_location="cpu", weights_only=True)
-    embed_dim = ckpt["embed.weight"].shape[1]
-    hidden    = ckpt["conv2.weight"].shape[0]
-    m = _m_slice.SliceGNN(_m_slice.VOCAB_SIZE, embed_dim, hidden)
+    vocab_size = ckpt["embed.weight"].shape[0]  # infer; avoids mismatch if retrained
+    embed_dim  = ckpt["embed.weight"].shape[1]
+    hidden     = ckpt["conv2.weight"].shape[0]
+    m = _m_slice.SliceGNN(vocab_size, embed_dim, hidden)
     m.load_state_dict(ckpt)
     return m.eval()
 
 
 def _load_pdg(path: Path) -> nn.Module:
     ckpt = torch.load(path, map_location="cpu", weights_only=True)
-    embed_dim = ckpt["embed.weight"].shape[1]
-    hidden    = ckpt["conv2.weight"].shape[0]
-    m = _m_pdg.SlicePDGGNN(_m_pdg.VOCAB_SIZE, embed_dim, hidden)
+    vocab_size = ckpt["embed.weight"].shape[0]
+    embed_dim  = ckpt["embed.weight"].shape[1]
+    hidden     = ckpt["conv2.weight"].shape[0]
+    m = _m_pdg.SlicePDGGNN(vocab_size, embed_dim, hidden)
     m.load_state_dict(ckpt)
     return m.eval()
 
@@ -194,42 +194,42 @@ REGISTRY = [
         "label":      "§7   instr baseline (opcode only)",
         "devign":     "56.53%",
         "preprocess": _pp_instr_v1,
-        "load_model": _load_instr_v1,
+        "load_model": _load_instr_auto,
     },
     {
         "checkpoint": "model_instr_v2.pt",
         "label":      "§13  Perfograph + call categories",
         "devign":     "58.75%",
         "preprocess": _pp_instr_v2,
-        "load_model": _load_instr_v2,
+        "load_model": _load_instr_auto,
     },
     {
         "checkpoint": "model_instr_v3.pt",
         "label":      "§14  VSDG memory ordering edges",
         "devign":     "57.47%",
         "preprocess": _pp_instr_v3,
-        "load_model": _load_instr_v3,
+        "load_model": _load_instr_auto,
     },
     {
         "checkpoint": "model_instr_v4.pt",
         "label":      "§15  register name embedding",
         "devign":     "57.47%",
         "preprocess": _pp_instr_v4,
-        "load_model": _load_instr_v4,
+        "load_model": _load_instr_auto,
     },
     {
         "checkpoint": "model_instr_v5.pt",
         "label":      "§16  static analysis flags",
         "devign":     "57.15%",
         "preprocess": _pp_instr_v5,
-        "load_model": _load_instr_v5,
+        "load_model": _load_instr_auto,
     },
     {
         "checkpoint": "model_instr_v6.pt",
         "label":      "§17  taint propagation",
         "devign":     "pending",
         "preprocess": _pp_instr_v6,
-        "load_model": _load_instr_v6,
+        "load_model": _load_instr_auto,
     },
     {
         "checkpoint": "model_slice.pt",
