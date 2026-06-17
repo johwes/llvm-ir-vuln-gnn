@@ -2408,20 +2408,43 @@ beyond that requires one of the two identifier-augmentation strategies above.
 
 ---
 
+## §17 — Taint Propagation + Extended Patterns
+
+**Scripts:** `preprocess_instr_v6.py` + `train_instr_v6.py`
+
+**Hypothesis:** Two improvements over §16: (1) extend Pattern B to cover FILEIO/NETWORK unchecked returns in addition to ALLOC; (2) propagate flags forward through DFG edges — flagged source node gets `x[:,2]=1.0`, 1-hop downstream gets `0.5`, 2-hop `0.25`, 3-hop `0.125`. Converts single-node binary signal into a taint trail.
+
+### Result
+
+**Test accuracy: 58.00%** (10,127 train / 1,255 valid / 1,250 test, 30ep, h=64)
+
+| Metric | §16 (v5) | §17 (v6) |
+|---|---|---|
+| Val accuracy peak | 58.33% (ep 25) | 58.49% (ep 18) |
+| Test accuracy | 57.15% | 58.00% |
+| Source graphs (flag=1.0) | 14.0% | 14.9% |
+| Tainted graphs (any signal) | 14.0% | 14.9% |
+| Flag precision P(vuln\|flagged) | — | 52.5% |
+| Flag recall P(flagged\|vuln) | — | 18.0% |
+| **Ceiling miss rate** | — | **82.0%** |
+
+**+0.85% over §16, essentially tied with §13 (58.75%) within run variance.**
+
+### Key diagnostic: tainted graphs == source graphs
+
+Both metrics read 14.9% — not a bug. Propagation adds tainted nodes *within* flagged graphs, not new flagged graphs. A graph that has a Pattern A/B source node will propagate taint to its DFG neighbours, but those neighbours are in the same graph. The graph-level coverage number cannot exceed source coverage. The improvement in test accuracy (+0.85%) comes from stronger within-graph signal: the taint trail gives the RGCN a path to follow rather than a single isolated flag.
+
+### The 82% ceiling miss rate
+
+This is the fundamental limit of the static analysis hybrid approach. 82% of vulnerable functions in Devign have no Pattern A or B match — and therefore receive zero signal from `x[:,2]` regardless of how well the taint propagates. This includes the dominant vulnerability classes in Devign that don't involve malloc/FILEIO/dangerous-call-without-guard patterns. No amount of taint depth or propagation decay tuning can reach these functions without new patterns.
+
+**Conclusion:** Taint propagation extracts more value from existing patterns (+0.85% over binary flags) but the 82% ceiling miss rate confirms the static analysis hybrid is at its limit with Pattern A+B alone. The model is now effectively tied with §13 on Devign. Further gains require either new patterns (covering more vulnerability classes) or a different approach entirely.
+
+---
+
 ## §17+ Planned Extensions
 
-§16 confirmed static analysis flags carry signal (val peak 58.33% ≈ §13) but
-14% coverage is too sparse. Extensions below address coverage and pattern breadth.
-
-### Priority 1 — Taint propagation through DFG
-
-Extend `_detect_static_flags()` to propagate flags forward through DFG edges.
-If a flagged instruction's result flows into another instruction, that downstream
-node also gets flagged — with a weight that decays per hop (e.g. 1.0 → 0.5 → 0.25).
-Converts a single-node binary signal into a taint trail the RGCN can follow across
-the graph. Implementable as a post-processing BFS over the edge list built in Pass 3.
-
-### Priority 2 — Additional absence patterns
+### Priority 1 — Additional absence patterns
 
 **Pattern C — format string with non-literal format argument:**
 A call to `printf`/`sprintf`/`fprintf`/`snprintf` where the format argument position
@@ -2435,7 +2458,7 @@ Any `call` instruction whose result is never used as an operand of any `icmp`
 anywhere in the function. Generalises Pattern B (malloc null check) to all functions
 that signal errors via their return value.
 
-### Priority 3 — Multi-class flag
+### Priority 2 — Multi-class flag
 
 Replace the binary float (0.0/1.0) with a small integer category:
 0 = clean, 1 = dangerous call without guard (Pattern A), 2 = unchecked alloc (Pattern B).
@@ -2453,7 +2476,7 @@ rather than treating both as the same signal.
 
 ## Current Conclusion
 
-15 experiments across block-level, instruction-level, slice-based, contrastive, and feature-enriched GNNs on Devign. Every approach converges at the same ceiling: **~57–58% test accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%.
+17 experiments across block-level, instruction-level, slice-based, contrastive, and feature-enriched GNNs on Devign. Every approach converges at the same ceiling: **~57–58% test accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%.
 
 The 7pp gap to CodeBERT is real and has three distinct causes:
 
