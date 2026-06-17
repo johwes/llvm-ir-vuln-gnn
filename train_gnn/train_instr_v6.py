@@ -172,6 +172,20 @@ def main():
         mean_taint = sum(d.x[:, 2].mean().item() for d in tainted_graphs) / len(tainted_graphs)
         print(f"  mean taint value across tainted graphs: {mean_taint:.4f}")
 
+    # Flag correlation with ground-truth labels — tells us if the pattern is discriminative
+    flagged = [(d.x[:, 2] > 0).any().item() for d in train_data]
+    labels  = [int(d.y.item()) for d in train_data]
+    fv = sum(1 for f, l in zip(flagged, labels) if f and l)       # flagged & vuln
+    fc = sum(1 for f, l in zip(flagged, labels) if f and not l)   # flagged & clean
+    uv = sum(1 for f, l in zip(flagged, labels) if not f and l)   # unflagged & vuln
+    n_f, n_v = fv + fc, fv + uv
+    if n_f:
+        print(f"  flag precision P(vuln|flagged):    {fv}/{n_f} ({fv/n_f*100:.1f}%)")
+    if n_v:
+        print(f"  flag recall    P(flagged|vuln):    {fv}/{n_v} ({fv/n_v*100:.1f}%)")
+        print(f"  ceiling miss rate (unflagged vuln): {uv}/{n_v} ({uv/n_v*100:.1f}%)"
+              "  <-- functions the model cannot see even in principle")
+
     vuln_train  = sum(1 for d in train_data if d.y.item() == 1)
     fixed_train = len(train_data) - vuln_train
     pos_weight  = torch.tensor([fixed_train / vuln_train]).to(device)
