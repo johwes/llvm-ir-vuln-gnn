@@ -40,6 +40,7 @@ Full GNN training pipeline. Each script corresponds to one experiment series:
 | `preprocess_instr_bigvul.py` + `train_instr_triplet.py` | Instruction triplet (§8) | BigVul |
 | `train_instr_focal.py` | Focal Contrastive Loss + SAGPooling (§10b) | BigVul |
 | `preprocess_bigvul_cls.py` + `train_bigvul_cls.py` | §21 Standard binary classifier; `--combine-devign` for joint training | BigVul (+ Devign) |
+| `preprocess_slice_pdg_v2.py` + `train_slice_pdg_v2.py` | §22 PDG slice + taint flags (Pattern A/B on PDG nodes) | Devign |
 | `eval_all_models.py` | Score all checkpoints against any IR corpus | — |
 | `scan_ir.py` | Score a single IR file with one model | — |
 
@@ -201,6 +202,17 @@ python train_bigvul_cls.py --epochs 30 --hidden 64
 # §21 BigVul + Devign combined (requires data/*_instr_v2_graphs.pkl from preprocess_instr_v2.py)
 python train_bigvul_cls.py --epochs 30 --hidden 64 --combine-devign
 # Saves: model_bigvul_combined.pt
+```
+
+### §22 PDG + taint flags
+
+```bash
+# Preprocess (adds Pattern A/B taint as second node feature column)
+python preprocess_slice_pdg_v2.py --skip-download
+
+# Train (compares against §12 baseline 56.48%)
+python train_slice_pdg_v2.py --epochs 30 --hidden 64
+# Saves: model_slice_pdg_v2.pt
 ```
 
 ### Inference

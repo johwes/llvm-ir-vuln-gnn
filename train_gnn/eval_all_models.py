@@ -70,22 +70,24 @@ from preprocess_instr_v4 import ir_to_graph_instr as _pp_instr_v4
 from preprocess_instr_v5 import ir_to_graph_instr as _pp_instr_v5
 from preprocess_instr_v6 import ir_to_graph_instr as _pp_instr_v6
 
-from preprocess_slice     import ir_to_graph_slice     as _pp_slice
-from preprocess_slice_pdg import ir_to_graph_slice_pdg as _pp_slice_pdg
+from preprocess_slice        import ir_to_graph_slice        as _pp_slice
+from preprocess_slice_pdg    import ir_to_graph_slice_pdg    as _pp_slice_pdg
+from preprocess_slice_pdg_v2 import ir_to_graph_slice_pdg_v2 as _pp_slice_pdg_v2
 
 # ---------------------------------------------------------------------------
 # Import model modules under unambiguous aliases
 # ---------------------------------------------------------------------------
 
-import train            as _m_block
-import train_instr      as _m_v1
-import train_instr_v2   as _m_v2
-import train_instr_v3   as _m_v3
-import train_instr_v4   as _m_v4
-import train_instr_v5   as _m_v5
-import train_instr_v6   as _m_v6
-import train_slice      as _m_slice
-import train_slice_pdg  as _m_pdg
+import train               as _m_block
+import train_instr         as _m_v1
+import train_instr_v2      as _m_v2
+import train_instr_v3      as _m_v3
+import train_instr_v4      as _m_v4
+import train_instr_v5      as _m_v5
+import train_instr_v6      as _m_v6
+import train_slice         as _m_slice
+import train_slice_pdg     as _m_pdg
+import train_slice_pdg_v2  as _m_pdg_v2
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +180,16 @@ def _load_pdg(path: Path) -> nn.Module:
     return m.eval()
 
 
+def _load_pdg_v2(path: Path) -> nn.Module:
+    ckpt = torch.load(path, map_location="cpu", weights_only=True)
+    vocab_size = ckpt["embed.weight"].shape[0]
+    embed_dim  = ckpt["embed.weight"].shape[1]
+    hidden     = ckpt["lin.weight"].shape[1]
+    m = _m_pdg_v2.SlicePDGGNNv2(vocab_size, embed_dim, hidden)
+    m.load_state_dict(ckpt)
+    return m.eval()
+
+
 # ---------------------------------------------------------------------------
 # Model registry
 # Each entry: checkpoint filename, human label, Devign accuracy, preprocessor,
@@ -251,6 +263,13 @@ REGISTRY = [
         "devign":     "56.48%",
         "preprocess": _pp_slice_pdg,
         "load_model": _load_pdg,
+    },
+    {
+        "checkpoint": "model_slice_pdg_v2.pt",
+        "label":      "§22  PDG + taint flags",
+        "devign":     "—",
+        "preprocess": _pp_slice_pdg_v2,
+        "load_model": _load_pdg_v2,
     },
     {
         "checkpoint": "model_bigvul_cls.pt",
