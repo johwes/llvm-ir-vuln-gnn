@@ -20,7 +20,7 @@ Outputs:
                     "edge_type": int64 (E,), "y": int, "cwe": str, "idx": int}
 
 Usage:
-    python preprocess_bigvul_cls.py --csv data/bigvul.csv
+    python preprocess_bigvul_cls.py --csv data/MSR_data_cleaned.csv
     python preprocess_bigvul_cls.py --subset 300    # smoke test (~200 graphs)
     python preprocess_bigvul_cls.py --workers 8
 """
@@ -187,7 +187,7 @@ def compile_split(work: list[tuple], workers: int) -> list[dict]:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--csv",     default=str(DATA / "bigvul.csv"))
+    ap.add_argument("--csv",     default=str(DATA / "MSR_data_cleaned.csv"))
     ap.add_argument("--subset",  type=int, default=None,
                     help="Process at most N vul=1 pairs (smoke test)")
     ap.add_argument("--workers", type=int, default=4)
@@ -197,7 +197,7 @@ def main():
     csv_path = Path(args.csv)
     if not csv_path.exists():
         print(f"ERROR: {csv_path} not found.")
-        print("  Download: gdown 1-0VhnHBp9IGh90s2wCNjeCMuy70HPl8X -O data/bigvul.csv")
+        print("  Download: gdown 1-0VhnHBp9IGh90s2wCNjeCMuy70HPl8X -O data/MSR_data_cleaned.csv")
         sys.exit(1)
 
     DATA.mkdir(exist_ok=True)

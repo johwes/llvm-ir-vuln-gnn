@@ -185,6 +185,21 @@ python train_instr_focal.py --epochs 50 --hidden 64 --tau 0.07 --gamma 2.0
 # If training is unstable: --tau 0.1 --gamma 1.0
 ```
 
+### BigVul experiments (§21 standard binary classifier)
+
+```bash
+# Preprocess (requires MSR_data_cleaned.csv)
+python preprocess_bigvul_cls.py --csv data/MSR_data_cleaned.csv --workers 4
+
+# §21 BigVul-only classifier
+python train_bigvul_cls.py --epochs 30 --hidden 64
+# Saves: model_bigvul_cls.pt
+
+# §21 BigVul + Devign combined (requires data/*_instr_v2_graphs.pkl from preprocess_instr_v2.py)
+python train_bigvul_cls.py --epochs 30 --hidden 64 --combine-devign
+# Saves: model_bigvul_combined.pt
+```
+
 ### Inference
 
 ```bash
