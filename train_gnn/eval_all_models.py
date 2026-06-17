@@ -6,16 +6,20 @@ Runs all registered model checkpoints on each function in the target IR, ranks
 by score, and (optionally) computes top-K precision/recall against an answer key.
 
 Usage:
-    # Score all functions in a directory of .ll files; no answer key
-    python eval_all_models.py --ir-dir /path/to/ir/
+    # Auto-clone johwes/scarnet, compile to IR, and score (requires git + clang)
+    python eval_all_models.py --scarnet --answer-key answer-key.txt
 
-    # Compare against answer key; K defaults to number of lines in the key file
-    python eval_all_models.py --ir-dir /path/to/ir/ --answer-key answer-key.txt
+    # Same, but keep the compiled IR for reuse on the next run
+    python eval_all_models.py --scarnet --keep-ir /tmp/scarnet-ir/ --answer-key answer-key.txt
+
+    # Reuse previously compiled IR (skip clone+compile)
+    python eval_all_models.py --ir-dir /tmp/scarnet-ir/ --answer-key answer-key.txt
 
     # Show only the summary table, not per-model ranked lists
-    python eval_all_models.py --ir-dir /path/to/ir/ --answer-key answer-key.txt --summary-only
+    python eval_all_models.py --scarnet --answer-key answer-key.txt --summary-only
 
 Answer key format: plain text, one function name per line (exact match against IR @name).
+Lines starting with # are treated as comments and ignored.
 
 Each model in the registry requires a different graph format, so the script runs
 the correct preprocessor for each checkpoint automatically.
@@ -23,7 +27,10 @@ the correct preprocessor for each checkpoint automatically.
 
 import argparse
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import torch
@@ -307,16 +314,88 @@ def _precision_recall(ranked: list[tuple[str, float]],
 
 
 # ---------------------------------------------------------------------------
+# Scarnet clone + compile
+# ---------------------------------------------------------------------------
+
+_SCARNET_REPO  = "https://github.com/johwes/scarnet.git"
+_SCARNET_SRCS  = [
+    "src/parse.c",
+    "src/handler.c",
+    "src/util.c",
+    "src/session.c",
+    "main.c",
+]
+
+
+def _setup_scarnet_ir(keep_ir: Path | None) -> tuple[Path, Path]:
+    """Clone johwes/scarnet and compile every C source to LLVM IR.
+
+    Returns (ir_dir, tmpdir) where tmpdir must be deleted by the caller when done.
+    If keep_ir is given, IR files are written there (persistent); otherwise they go
+    inside tmpdir alongside the clone and are removed with it.
+    """
+    tmpdir    = Path(tempfile.mkdtemp(prefix="scarnet-eval-"))
+    clone_dir = tmpdir / "scarnet"
+    ir_dir    = keep_ir if keep_ir else tmpdir / "ir"
+    ir_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Cloning {_SCARNET_REPO} ...")
+    try:
+        subprocess.run(
+            ["git", "clone", "--quiet", "--depth", "1",
+             _SCARNET_REPO, str(clone_dir)],
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise RuntimeError(f"git clone failed: {e}") from e
+
+    compiled = 0
+    for rel in _SCARNET_SRCS:
+        c_file = clone_dir / rel
+        base   = rel.replace("/", "_").removesuffix(".c")
+        ll_out = ir_dir / f"{base}.ll"
+
+        print(f"  compiling {rel:<30} ...", end=" ", flush=True)
+        result = subprocess.run(
+            ["clang", "-O0", "-fno-inline", "-S", "-emit-llvm",
+             "-I", str(clone_dir / "include"),
+             "-o", str(ll_out), str(c_file)],
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            print("ok")
+            compiled += 1
+        else:
+            print("FAILED (skipped)")
+            if result.stderr:
+                print(f"    {result.stderr.decode(errors='replace').strip()}")
+
+    print(f"  {compiled}/{len(_SCARNET_SRCS)} source files compiled → {ir_dir}\n")
+    return ir_dir, tmpdir
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ir-dir",      required=True,
-                    help=".ll file or directory of .ll files to evaluate")
+
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--scarnet", action="store_true",
+                     help="Clone johwes/scarnet and compile to IR automatically "
+                          "(requires git and clang in PATH)")
+    src.add_argument("--ir-dir",
+                     help=".ll file or directory of .ll files to evaluate directly")
+
+    ap.add_argument("--keep-ir",     default=None, metavar="DIR",
+                    help="With --scarnet: save compiled IR to this directory so you "
+                         "can reuse it with --ir-dir on later runs")
     ap.add_argument("--answer-key",  default=None,
-                    help="Text file with one known-vulnerable function name per line")
+                    help="Text file with one known-vulnerable function name per line "
+                         "(lines starting with # are ignored)")
     ap.add_argument("--top-k",       type=int, default=None,
                     help="K for top-K P/R (default: number of lines in answer key)")
     ap.add_argument("--model-dir",   default=str(HERE),
@@ -325,12 +404,25 @@ def main():
                     help="Print only the summary table, skip per-model ranked lists")
     args = ap.parse_args()
 
-    ir_path    = Path(args.ir_dir)
-    model_dir  = Path(args.model_dir)
+    if args.keep_ir and not args.scarnet:
+        ap.error("--keep-ir only makes sense with --scarnet")
 
-    if not ir_path.exists():
-        print(f"ERROR: --ir-dir {ir_path} does not exist")
-        sys.exit(1)
+    model_dir = Path(args.model_dir)
+    tmpdir: Path | None = None
+
+    # -- Resolve IR source -------------------------------------------------------
+    if args.scarnet:
+        for tool in ("git", "clang"):
+            if not shutil.which(tool):
+                print(f"ERROR: {tool} not found in PATH (required for --scarnet)")
+                sys.exit(1)
+        keep_ir = Path(args.keep_ir) if args.keep_ir else None
+        ir_path, tmpdir = _setup_scarnet_ir(keep_ir)
+    else:
+        ir_path = Path(args.ir_dir)
+        if not ir_path.exists():
+            print(f"ERROR: --ir-dir {ir_path} does not exist")
+            sys.exit(1)
 
     # Load answer key
     answer_key: set[str] = set()
@@ -438,6 +530,13 @@ def main():
         print(f"  {row['checkpoint']:<24}  {row['label']:<35}  {row['devign']:>7}{pr_cols}")
     if answer_key:
         print(f"\n  K = {top_k}")
+
+    # -- Cleanup temp clone+IR dir -----------------------------------------------
+    if tmpdir and tmpdir.exists():
+        if args.keep_ir:
+            # Only the clone is in tmpdir; IR was written to keep_ir
+            print(f"(cleaned up temporary clone dir)")
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 if __name__ == "__main__":
