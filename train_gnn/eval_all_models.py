@@ -232,7 +232,7 @@ REGISTRY = [
     {
         "checkpoint": "model_instr_v6.pt",
         "label":      "§17  taint propagation",
-        "devign":     "pending",
+        "devign":     "58.00%",
         "preprocess": _pp_instr_v6,
         "load_model": _load_instr_auto,
     },
