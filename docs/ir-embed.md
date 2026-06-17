@@ -2630,11 +2630,13 @@ H(148)/148 ≈ 0.038.
 | `model.pt` | §4d block | 30 | 51.6% | 0.033 | 0.0% | 0% |
 | `model_instr_v2.pt` | §13 Perfograph | 31 | 65.9% | 0.032 | 0.0% | 0% |
 | `model_slice.pt` | §11 DFG slice | 63 | 53.7% | 0.016 | 0.0% | 0% |
+| `model_slice_pdg_v2.pt` | §22 PDG + taint | 17 | 60.8% | 0.059 | 0.0% | 0% |
 | ENSEMBLE (mean) | — | **7** | 65.7% | 0.143 | 10.0% | **100%** |
 | ENSEMBLE (max) | — | **10** | 83.7% | 0.100 | 10.0% | **100%** |
 
-**Mean MRR (9 classifiers): 0.133 — 3.5× random baseline (0.038)**  
+**Mean MRR (9 original classifiers): 0.133 — 3.5× random baseline (0.038)**  
 Median rank: 13. R@10=100% for 4/9 models (44%) and both ensembles.
+§22 MRR: 0.059 — improvement over §11 DFG slice (0.016) but regression from §12 PDG (0.100). Taint boosted memory-complex functions (`zcalloc`, `crc32_little`, `crc32_big`) above `deflate_stored`.
 
 ### Key findings
 
@@ -2717,8 +2719,11 @@ Taint propagates forward through DFG edges with 0.5 decay per hop (max 3 hops). 
 - Devign: 56.75% (+0.27pp vs §12 — within noise)
 - Taint coverage: 12% of training graphs have ≥1 tainted node
 - **Scarnet: 9/13 (69.2% P@13) — regression from §12's 11/13**
+- **zlib v1.2.11: rank 17/148** — regression from §12's rank 10
 
-**What went wrong:** The taint flags boosted two false positives (`handle_get`, `handle_auth`) — both have unguarded dangerous calls by the Pattern A/B definition, but are not actually vulnerable. Two true positives (`session_consume_frag`, `parse_msg_header`) dropped below the cutoff because their vulnerability patterns don't match Pattern A or B, so they received no taint boost.
+**What went wrong on scarnet:** The taint flags boosted two false positives (`handle_get`, `handle_auth`) — both have unguarded dangerous calls by the Pattern A/B definition, but are not actually vulnerable. Two true positives (`session_consume_frag`, `parse_msg_header`) dropped below the cutoff because their vulnerability patterns don't match Pattern A or B, so they received no taint boost.
+
+**What went wrong on zlib:** `zcalloc`, `crc32_little`, `crc32_big` — all memory-intensive functions with complex allocation/copy patterns — ranked ahead of `deflate_stored`. Pattern A/B flags memory complexity, not the specific arithmetic overflow in the CVE. The taint signal generalises to "this function touches memory in complex ways", not "this function has the specific pattern that caused this CVE".
 
 **Key finding:** §12's strength came partly from its *lack* of semantic assumptions. The PDG structural signal generalises to scarnet's vulnerability types without imposing a Devign-derived prior. Adding semantic heuristics (taint patterns tuned to Devign's vulnerability distribution) introduced domain-specific bias that hurt out-of-distribution performance. This mirrors §15/§16: semantic enrichment that doesn't cross the distribution boundary hurts more than it helps.
 
