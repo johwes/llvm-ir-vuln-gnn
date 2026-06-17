@@ -86,6 +86,21 @@ def load_items(csv_path: Path, subset: int | None, seed: int
     df = df.dropna(subset=["func_before"])
     df = df[df["func_before"].str.strip() != ""]
 
+    # Filter to C source files only — BigVul covers multiple languages;
+    # compile_to_ir only handles C so trying others wastes time and inflates attrition.
+    before = len(df)
+    if "file_name" in df.columns:
+        df = df[df["file_name"].str.lower().str.endswith(".c", na=False)]
+        print(f"  C-only filter (file_name ends in .c): {len(df):,} rows kept "
+              f"(dropped {before - len(df):,})")
+    elif "lang" in df.columns:
+        df = df[df["lang"].str.strip().str.upper() == "C"]
+        print(f"  C-only filter (lang==C): {len(df):,} rows kept "
+              f"(dropped {before - len(df):,})")
+    else:
+        print("  WARNING: no file_name or lang column found — skipping C filter "
+              "(expect high attrition from non-C functions)")
+
     # --- vul=1 pairs: before (label=1) and after (label=0) ----------------------
     vuln_df = df[df["vul"] == 1].copy()
     vuln_df = vuln_df.dropna(subset=["func_after"])
