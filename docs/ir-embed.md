@@ -1,6 +1,6 @@
 # GNN Vulnerability Detector — LLVM IR Experiments
 
-**Status:** Complete — 21 experiments  
+**Status:** Complete — 22 experiments  
 **Models:** `johnnywesterlund/scar-gnn-defect-detector` on Hugging Face  
 **Code:** `github.com/johwes/llvm-ir-vuln-gnn`
 
@@ -24,7 +24,7 @@ We trained a neural network to read compiled C code and score each function by h
 2. **The compiler discards the most useful information.** Variable names, string literals, and comments are gone before the model sees anything. A function that reads `gets(user_input)` in source becomes an anonymous call instruction in IR.
 3. **The training labels are noisy.** Devign labels are assigned at commit level — sometimes the actual bug is in a different function than the one that changed.
 
-These causes are structural. Trying 9 different architectures, edge types, and feature sets over 19 experiments confirmed that better model design cannot break through this ceiling. The reference number for the best source-code language model (CodeBERT, which reads actual C with names intact) is 63.4% — our 6pp gap is entirely explained by the IR vocabulary loss.
+These causes are structural. Trying 12 different architectures, edge types, and feature sets over 22 experiments confirmed that better model design cannot break through this ceiling. The reference number for the best source-code language model (CodeBERT, which reads actual C with names intact) is 63.4% — our 6pp gap is entirely explained by the IR vocabulary loss.
 
 **Real-world performance is a different story.** When evaluated on actual vulnerable code:
 
@@ -2699,9 +2699,36 @@ The prior BigVul experiments (§6, §8) used triplet contrastive learning and co
 
 ---
 
+## §22 — PDG Slice + Taint Flags
+
+**Scripts:** `preprocess_slice_pdg_v2.py` + `train_slice_pdg_v2.py`  
+**Dataset:** Devign  
+**Architecture:** SlicePDGGNNv2 — same as §12 but with taint float concatenated after opcode embedding (in_dim = embed_dim + 1)
+
+The §22 hypothesis: §12's PDG selects the right subgraph; adding explicit taint annotations to each node (which instructions carry dangerous values) should improve score *separation* between true and false positives, even if the P@K hit count stays at 11/13.
+
+**Taint sources (same patterns as §17):**
+- Pattern A: call to a dangerous function (DANGEROUS_SINKS) with no icmp guard in the same or preceding block
+- Pattern B: call to alloc/IO/network function whose return value is never compared with icmp
+
+Taint propagates forward through DFG edges with 0.5 decay per hop (max 3 hops). Second column of (N, 2) float32 node feature matrix.
+
+**Results:**
+- Devign: 56.75% (+0.27pp vs §12 — within noise)
+- Taint coverage: 12% of training graphs have ≥1 tainted node
+- **Scarnet: 9/13 (69.2% P@13) — regression from §12's 11/13**
+
+**What went wrong:** The taint flags boosted two false positives (`handle_get`, `handle_auth`) — both have unguarded dangerous calls by the Pattern A/B definition, but are not actually vulnerable. Two true positives (`session_consume_frag`, `parse_msg_header`) dropped below the cutoff because their vulnerability patterns don't match Pattern A or B, so they received no taint boost.
+
+**Key finding:** §12's strength came partly from its *lack* of semantic assumptions. The PDG structural signal generalises to scarnet's vulnerability types without imposing a Devign-derived prior. Adding semantic heuristics (taint patterns tuned to Devign's vulnerability distribution) introduced domain-specific bias that hurt out-of-distribution performance. This mirrors §15/§16: semantic enrichment that doesn't cross the distribution boundary hurts more than it helps.
+
+**Semantic heuristic track closed.** §12 PDG slice (11/13 scarnet) remains the best model.
+
+---
+
 ## Current Conclusion
 
-21 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, ensemble GNNs on Devign and scarnet, and zero-shot transfer to zlib v1.2.11. Every approach converges at the same ceiling: **~57–58% Devign accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%. Switching to BigVul's superior CVE-level labels (§21) does not break the ceiling on the scarnet real-world benchmark.
+22 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, BigVul-trained, and taint-augmented GNNs on Devign and scarnet, and zero-shot transfer to zlib v1.2.11. Every approach converges at the same ceiling: **~57–58% Devign accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%. Switching to BigVul's superior CVE-level labels (§21) and adding taint annotations to PDG nodes (§22) both fail to improve the scarnet real-world benchmark.
 
 The 7pp gap to CodeBERT is real and has three distinct causes:
 
@@ -2725,6 +2752,8 @@ Devign labels are assigned at git-commit granularity to the function that change
 - **Granularity:** basic block vs. individual instruction — marginal improvement (+0.16pp), same ceiling.
 - **Feature enrichment:** Perfograph constant encoding + categorical call targets (§13) — marginal +0.75pp best case, high cross-run variance, within noise.
 - **Register name embedding (§15):** FNV-1a hash of LLVM IR register names into 64 buckets, learned 16-dim embedding — 57.47%, no improvement. Names don't transfer across codebases; bucket collisions dominate. **IR feature engineering track closed.**
+- **Training data quality (§21):** Switching from Devign's commit-level labels to BigVul's CVE-level labels — no scarnet improvement. Dataset quality is not the bottleneck.
+- **Taint flags on PDG nodes (§22):** Explicit Pattern A/B annotations on PDG slice nodes — regressed from 11/13 to 9/13 on scarnet. Semantic heuristics tuned to Devign's vulnerability distribution hurt out-of-distribution performance. **Semantic heuristic track closed.**
 
 ### What has not been tried
 
