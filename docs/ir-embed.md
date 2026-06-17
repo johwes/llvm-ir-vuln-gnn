@@ -6,6 +6,29 @@
 
 ---
 
+## TL;DR — What this is and what we found
+
+We trained a neural network to read compiled C code and score each function by how likely it is to contain a security bug — with no human-written rules, no source code, and no knowledge of the specific codebase.
+
+**How it works:** C source is compiled to LLVM IR (a machine-readable intermediate form). Each function's IR is converted into a graph — nodes are instructions, edges represent data flow and control flow. A Graph Neural Network (GNN) reads that graph and outputs a suspicion score. Training used Devign, a public dataset of ~27,000 C functions from open-source projects labeled by whether a security fix was later committed.
+
+**The benchmark number looks bad — but that's expected.** On the Devign test set, all architectures we tried score ~57–58% accuracy. The "always guess the majority class" baseline is 56.6%. So we're only 1–2 percentage points above random on the benchmark. This is not a model failure; it is a hard ceiling with three known causes:
+
+1. **Security bugs are often absences.** A safe `memcpy` and an unsafe one look nearly identical in the graph — the only difference is the missing bounds check. A graph can only represent what is there, not what is not.
+2. **The compiler discards the most useful information.** Variable names, string literals, and comments are gone before the model sees anything. A function that reads `gets(user_input)` in source becomes an anonymous call instruction in IR.
+3. **The training labels are noisy.** Devign labels are assigned at commit level — sometimes the actual bug is in a different function than the one that changed.
+
+These causes are structural. Trying 9 different architectures, edge types, and feature sets over 19 experiments confirmed that better model design cannot break through this ceiling. The reference number for the best source-code language model (CodeBERT, which reads actual C with names intact) is 63.4% — our 6pp gap is entirely explained by the IR vocabulary loss.
+
+**Real-world performance is a different story.** When evaluated on actual vulnerable code:
+
+- **scarnet** (purpose-built vulnerable server, 13 known-vulnerable functions out of 19): best model finds **11/13 at 84.6% precision/recall**. The 2 missed are a bug that only triggers on ARM hardware and one that requires fuzzing to discover — both structurally invisible to any static tool.
+- **zlib v1.2.11** (real production library, 148 functions, 1 known CVE): 4 of 9 models rank `deflate_stored` in the **top 10 out of 148** with no zlib training. Mean reciprocal rank 0.133 — 3.5× better than random.
+
+**Practical value:** The GNN is a zero-cost pre-screener. It runs in under a second per function and narrows a large codebase down to a ranked shortlist worth human attention. It is not a replacement for fuzzing or formal verification — it complements them by triaging which functions deserve deeper scrutiny first.
+
+---
+
 ## Setup
 
 5 vulnerable/fixed C pairs from [johwes/SCAR-test-c](https://github.com/johwes/SCAR-test-c)
