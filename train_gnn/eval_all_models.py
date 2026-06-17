@@ -261,17 +261,31 @@ _FN_NAME_RE = re.compile(r'@([\w.$]+)\s*\(')
 
 
 def _split_functions(ir_text: str) -> list[tuple[str, str]]:
-    """Split a .ll file into (fn_name, fn_ir_text) pairs, one per define."""
+    """Split a .ll file into (fn_name, fn_ir_text) pairs, one per define.
+
+    Each fn_ir_text is a complete synthetic module: all non-define lines from
+    the original file (type declarations, declare statements, attributes,
+    metadata) plus only this function's define block. This lets llvmlite parse
+    functions that reference named struct types or external declares.
+    """
     segs = re.split(r'(?=^define\b)', ir_text, flags=re.MULTILINE)
-    result = []
+    defines = []
+    module_ctx_parts = []
     for seg in segs:
-        seg = seg.strip()
-        if not seg.startswith("define"):
-            continue
-        m = _FN_NAME_RE.search(seg[:300])
+        if seg.lstrip().startswith("define"):
+            defines.append(seg.strip())
+        else:
+            module_ctx_parts.append(seg)
+    module_ctx = "".join(module_ctx_parts)
+
+    result = []
+    for define_text in defines:
+        m = _FN_NAME_RE.search(define_text[:300])
         if not m:
             continue
-        result.append((m.group(1), seg))
+        # Synthetic complete module: context (types/declares/attrs) + this function only
+        full_ir = module_ctx + "\n" + define_text
+        result.append((m.group(1), full_ir))
     return result
 
 
