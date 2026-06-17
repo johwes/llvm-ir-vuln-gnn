@@ -2484,7 +2484,7 @@ rather than treating both as the same signal.
 | `model_instr_v3.pt` | §14 VSDG memory ordering edges | 57.47% | 16/19 | 10/13 | 76.9% |
 | `model_instr_v4.pt` | §15 register name embedding | 57.47% | 16/19 | 10/13 | 76.9% |
 | `model_instr_v5.pt` | §16 static analysis flags | 57.15% | 16/19 | 10/13 | 76.9% |
-| `model_instr_v6.pt` | **§17 taint propagation** | pending | 16/19 | **11/13** | **84.6%** |
+| `model_instr_v6.pt` | **§17 taint propagation** | 58.00% | 16/19 | **11/13** | **84.6%** |
 | `model_slice.pt` | §11 DFG slice GNN | 55.60% | 16/19 | 10/13 | 76.9% |
 | `model_slice_pdg.pt` | **§12 PDG slice GNN** | 56.48% | 16/19 | **11/13** | **84.6%** |
 
