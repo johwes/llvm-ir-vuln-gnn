@@ -1,6 +1,6 @@
 # GNN Vulnerability Detector — LLVM IR Experiments
 
-**Status:** Complete — 20 experiments  
+**Status:** Complete — 21 experiments  
 **Models:** `johnnywesterlund/scar-gnn-defect-detector` on Hugging Face  
 **Code:** `github.com/johwes/llvm-ir-vuln-gnn`
 
@@ -2665,9 +2665,43 @@ it sees the same structurally complex code regardless of patch status.
 
 ---
 
+## §21 — BigVul Standard Binary Classifier
+
+**Scripts:** `preprocess_bigvul_cls.py` + `train_bigvul_cls.py`  
+**Dataset:** BigVul (MSR_data_cleaned.csv), C functions only  
+**Architecture:** InstructionGNN v2 (§13 weight format, identical to `model_instr_v2.pt`)
+
+The prior BigVul experiments (§6, §8) used triplet contrastive learning and collapsed. §21 tests whether the same v2 GNN trained as a standard binary classifier on CVE-level labels outperforms Devign-trained models on real-world code.
+
+**Three label sources:**
+- `func_before` where `vul=1` → label=1 (vulnerable)
+- `func_after`  where `vul=1` → label=0 (fixed — serves as hard negative)
+- `func_before` where `vul=0` → label=0 (unrelated clean functions)
+
+**C-only filter:** BigVul spans many languages. Filtering `file_name.endswith(".c")` before compilation reduced work from 150K to 72K items; attrition dropped from ~90% to ~54%.
+
+**Checkpoint metric:** Balanced accuracy = (TPR + TNR) / 2. Raw accuracy on the BigVul val set (85% negative) peaks at epoch 1 before pos_weight destabilises predictions — balanced accuracy correctly tracks minority-class recall.
+
+### Results
+
+**BigVul-only** (`model_bigvul_cls.pt`):
+- Train: 33,422 graphs — 1,201 pos / 32,221 neg, pos_weight=26.828
+- Test: raw=79.93% (majority baseline 96.17%), balanced≈61%
+- **Scarnet: 9/13 (69.2% P@13)**
+
+**BigVul+Devign combined** (`model_bigvul_combined.pt`):
+- Train: 43,549 graphs — 5,601 pos / 37,948 neg, pos_weight=6.775
+- Best val balanced accuracy: 67.98% (epoch 23 of 30)
+- Test: raw=75.10%, balanced=60.95%
+- **Scarnet: 9/13 (69.2% P@13)** — no gain from combining datasets
+
+**Finding:** Switching from Devign's commit-level labels to BigVul's CVE-level labels does not improve real-world detection. The PDG structural signal (§12, 11/13 scarnet) outperforms both regardless of training data. Dataset quality is not the bottleneck — it's the IR representation ceiling established in §§13–17. Adding Devign graphs to the combined training also provides no lift, confirming that label noise in Devign has no multiplicative negative effect (the cleaner BigVul labels simply dominate).
+
+---
+
 ## Current Conclusion
 
-20 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, ensemble GNNs on Devign and scarnet, and zero-shot transfer to zlib v1.2.11. Every Devign-trained approach converges at the same ceiling: **~57–58% test accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%.
+21 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, ensemble GNNs on Devign and scarnet, and zero-shot transfer to zlib v1.2.11. Every approach converges at the same ceiling: **~57–58% Devign accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%. Switching to BigVul's superior CVE-level labels (§21) does not break the ceiling on the scarnet real-world benchmark.
 
 The 7pp gap to CodeBERT is real and has three distinct causes:
 

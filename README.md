@@ -64,6 +64,8 @@ instructions (`hf_upload.py`).
 | §15 Register name embedding | 57.47% | best zlib CVE rank (see below) |
 | §16 Static analysis flags | 57.15% | |
 | §17 Taint propagation | 58.00% | |
+| §21 BigVul binary (`model_bigvul_cls.pt`) | — | CVE-level labels; balanced acc 61% on BigVul test |
+| §21 BigVul+Devign combined (`model_bigvul_combined.pt`) | — | no gain vs BigVul-only on scarnet |
 | CodeBERT (reference) | 63.43% | reads C source with identifier names |
 
 **Ceiling: ~57–58%** across all architectures. The gap to CodeBERT is structural — LLVM IR discards variable names and string literals before the model sees anything. See [docs/ir-embed.md](docs/ir-embed.md) for the full analysis.
@@ -74,6 +76,7 @@ instructions (`hf_upload.py`).
 |---|---|---|
 | scarnet (19 functions, 13 known-vulnerable) | P/R @13 | **84.6%** — §12 PDG slice (11/13 found) |
 | zlib v1.2.11 (148 functions, CVE-2018-25032) | Rank of `deflate_stored` | **rank 2/148** — §15; top-10 in 4/9 models |
+| §21 BigVul models (scarnet) | P/R @13 | 9/13 (69.2%) — same as §4d/§7 Devign baselines |
 
 **Deployed models:** `model.pt`, `model_instr.pt`, `model_slice.pt`, `model_slice_pdg.pt` —
 see [`train_gnn/MODEL_CARD.md`](train_gnn/MODEL_CARD.md) and
