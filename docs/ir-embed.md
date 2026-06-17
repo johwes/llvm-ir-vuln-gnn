@@ -2384,10 +2384,34 @@ beyond that requires one of the two identifier-augmentation strategies above.
 
 ---
 
+## §16 — Static Analysis Flags
+
+**Scripts:** `preprocess_instr_v5.py` + `train_instr_v5.py`
+
+**Hypothesis:** Convert absence-of-guard patterns into explicit node-level presence signals. Two patterns: (A) dangerous call (STRING/COPY/FILEIO/NETWORK) with no icmp in same or predecessor block; (B) ALLOC result never compared to null anywhere in the function. Flagged nodes get `x[:,2]=1.0`. Based on §13/v2 (3 relations).
+
+### Result
+
+**Test accuracy: 57.15%** (10,129 train / 1,255 valid / 1,251 test, 30ep, h=64)
+
+| Metric | §13 (v2) | §16 (v5) |
+|---|---|---|
+| Val accuracy peak | 59.44% | 58.33% (epoch 25) |
+| Test accuracy | 58.75% (best run) | 57.15% |
+| Flag coverage | — | 14.0% of train graphs |
+
+**Marginal improvement over §7 baseline (56.53%), below §13.** Val peak (58.33%) is close to §13, confirming the flags carry real signal — but coverage is too sparse for the model to learn a robust generalisation.
+
+**Root cause: 14% coverage is the bottleneck.** Only 1 in 7 training graphs has any flagged node. 86% of examples have `x[:,2]=0` everywhere, drowning the flag gradient. The val curve finds the signal late (epoch 22–25) but it doesn't consolidate to test. The pattern detection is correct — it's too narrow.
+
+**Conclusion:** Static analysis flags add real signal but insufficient density. The fix is taint propagation: propagating the flag forward through DFG edges (flagged malloc → downstream dereference is also suspicious) would push coverage from 14% to an estimated 25–35% with no new pattern definitions.
+
+---
+
 ## §17+ Planned Extensions
 
-Results from §16 pending. The following experiments are queued in priority order,
-contingent on §16 showing that static analysis flags add meaningful signal.
+§16 confirmed static analysis flags carry signal (val peak 58.33% ≈ §13) but
+14% coverage is too sparse. Extensions below address coverage and pattern breadth.
 
 ### Priority 1 — Taint propagation through DFG
 
