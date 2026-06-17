@@ -2384,6 +2384,49 @@ beyond that requires one of the two identifier-augmentation strategies above.
 
 ---
 
+## §17+ Planned Extensions
+
+Results from §16 pending. The following experiments are queued in priority order,
+contingent on §16 showing that static analysis flags add meaningful signal.
+
+### Priority 1 — Taint propagation through DFG
+
+Extend `_detect_static_flags()` to propagate flags forward through DFG edges.
+If a flagged instruction's result flows into another instruction, that downstream
+node also gets flagged — with a weight that decays per hop (e.g. 1.0 → 0.5 → 0.25).
+Converts a single-node binary signal into a taint trail the RGCN can follow across
+the graph. Implementable as a post-processing BFS over the edge list built in Pass 3.
+
+### Priority 2 — Additional absence patterns
+
+**Pattern C — format string with non-literal format argument:**
+A call to `printf`/`sprintf`/`fprintf`/`snprintf` where the format argument position
+contains a variable pointer (VK_INSTRUCTION or VK_ARGUMENT) rather than a GEP into a
+global string constant. In LLVM IR, string literals compile to
+`getelementptr inbounds [N x i8], [N x i8]* @.str, i64 0, i64 0` — detectable as a
+VK_GLOBAL_VAR operand. A user-controlled format string has no such GEP.
+
+**Pattern D — unchecked return value (generalised Pattern B):**
+Any `call` instruction whose result is never used as an operand of any `icmp`
+anywhere in the function. Generalises Pattern B (malloc null check) to all functions
+that signal errors via their return value.
+
+### Priority 3 — Multi-class flag
+
+Replace the binary float (0.0/1.0) with a small integer category:
+0 = clean, 1 = dangerous call without guard (Pattern A), 2 = unchecked alloc (Pattern B).
+Use `nn.Embedding(3, 4)` so the model learns separate representations per pattern type
+rather than treating both as the same signal.
+
+### Real-world evaluation queue
+
+- **scarnet** `johwes/scarnet`: 19 functions, 13 known-vulnerable. Primary validation target.
+- **zlib v1.2.11**: known CVEs including CVE-2018-25032 (deflate buffer overflow).
+  Evaluate after model is stable — provides a harder, real-world test beyond the
+  intentionally vulnerable scarnet.
+
+---
+
 ## Current Conclusion
 
 15 experiments across block-level, instruction-level, slice-based, contrastive, and feature-enriched GNNs on Devign. Every approach converges at the same ceiling: **~57–58% test accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%.
