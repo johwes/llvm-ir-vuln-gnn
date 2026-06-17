@@ -8,6 +8,46 @@ without access to source identifiers, type names, or string literals.
 
 ---
 
+## Recommended model
+
+**Use `model_slice_pdg.pt` (§12 PDG slice GNN)** — the best checkpoint across 22 experiments.
+
+| Metric | Result |
+|---|---|
+| scarnet (13 known-vulnerable functions) | **11/13 found (84.6% recall @13)** |
+| zlib v1.2.11 — CVE-2018-25032 | **rank 2/148** (deflate_stored) |
+| Devign test accuracy | 56.48% |
+
+### Why this model
+
+The §12 model builds a *Program Dependence Graph* slice backward from dangerous call sites
+(format-string, buffer, memory functions) and runs a 2-layer RGCN over the resulting
+subgraph. It achieves the best real-world detection rate on both evaluation corpora, with
+zero added complexity beyond the core PDG structure.
+
+Simpler models miss the control-flow context that separates guarded from unguarded dangerous
+calls. More complex models (§16 static flags, §17/§22 taint propagation) consistently hurt
+out-of-distribution performance by overfitting to Devign's vulnerability distribution — the
+PDG's structural simplicity is part of its advantage.
+
+The two scarnet misses are irreducible within any static IR-only approach: one requires
+architecture-specific knowledge (ARM calling convention), one requires dynamic analysis
+(fuzzer + sanitizer). No further graph-construction improvements within the IR-only GNN
+path are expected to close this gap.
+
+### Quick start (inference)
+
+```bash
+# Score a single C file
+clang -O0 -fno-inline -S -emit-llvm -o /tmp/target.ll target.c
+python scan_ir.py /tmp/target.ll --model model_slice_pdg.pt
+
+# Score a codebase and rank by suspicion
+python eval_all_models.py --ir-dir /path/to/ir/ --model model_slice_pdg.pt
+```
+
+---
+
 ## What's in this directory
 
 ### `demo.py` + `ir/` + `samples/`
