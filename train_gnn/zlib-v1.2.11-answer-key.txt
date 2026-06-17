@@ -1,0 +1,13 @@
+# zlib v1.2.11 known-vulnerable functions — answer key
+# CVE-2018-25032: deflate buffer overflow in deflate_stored()
+#   Fixed in v1.2.12 (March 2022). Present in all v1.2.11 builds.
+#   Root cause: when output space is near-exhausted and input is
+#   non-compressible, stored-block size calculation overflows the
+#   output buffer. Affects deflate.c only.
+#
+# CVEs fixed IN v1.2.11 (not present — patched before this release):
+#   CVE-2016-9840  inflateMark()    — shift exponent UB
+#   CVE-2016-9841  inflate_fast()   — pointer arithmetic OOB
+#   CVE-2016-9842  inflateMark()    — undefined left-shift
+#   CVE-2016-9843  crc32_big()      — big-endian CRC UB
+deflate_stored
