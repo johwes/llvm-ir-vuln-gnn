@@ -18,11 +18,27 @@ Usage:
     # Show only the summary table, not per-model ranked lists
     python eval_all_models.py --scarnet --answer-key answer-key.txt --summary-only
 
+    # Download the 4 published HuggingFace checkpoints to --model-dir, then score
+    python eval_all_models.py --scarnet --fetch-hf --answer-key answer-key.txt
+
 Answer key format: plain text, one function name per line (exact match against IR @name).
 Lines starting with # are treated as comments and ignored.
 
 Each model in the registry requires a different graph format, so the script runs
 the correct preprocessor for each checkpoint automatically.
+
+HuggingFace models (--fetch-hf downloads these automatically):
+    model.pt          §4d  block-level DefectGNN
+    model_instr.pt    §7   instruction-level baseline
+    model_slice.pt    §11  DFG slice GNN
+    model_slice_pdg.pt §12 PDG slice GNN
+
+Locally retrained models (not on HuggingFace — run the matching train script):
+    model_instr_v2.pt   python train_instr_v2.py   (needs data/*_instr_v2_graphs.pkl)
+    model_instr_v3.pt   python train_instr_v3.py   (needs data/*_instr_v3_graphs.pkl)
+    model_instr_v4.pt   python train_instr_v4.py   (needs data/*_instr_v4_graphs.pkl)
+    model_instr_v5.pt   python train_instr_v5.py   (needs data/*_instr_v5_graphs.pkl)
+    model_instr_v6.pt   python train_instr_v6.py   (needs data/*_instr_v6_graphs.pkl)
 """
 
 import argparse
@@ -314,6 +330,49 @@ def _precision_recall(ranked: list[tuple[str, float]],
 
 
 # ---------------------------------------------------------------------------
+# HuggingFace model download
+# ---------------------------------------------------------------------------
+
+_HF_REPO = "johnnywesterlund/scar-gnn-defect-detector"
+
+# The 4 published checkpoints. v2–v6 were trained after the last HF upload
+# and must be retrained locally using their respective train_instr_vN.py scripts.
+_HF_CHECKPOINTS = [
+    "model.pt",
+    "model_instr.pt",
+    "model_slice.pt",
+    "model_slice_pdg.pt",
+]
+
+
+def _fetch_hf_models(dest_dir: Path) -> None:
+    """Download published checkpoints from HuggingFace Hub into dest_dir."""
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError:
+        print("ERROR: huggingface_hub not installed. Run: pip install huggingface_hub")
+        sys.exit(1)
+
+    print(f"Fetching {len(_HF_CHECKPOINTS)} checkpoints from {_HF_REPO} ...")
+    for filename in _HF_CHECKPOINTS:
+        dest = dest_dir / filename
+        if dest.exists():
+            print(f"  already exists, skipping: {filename}")
+            continue
+        print(f"  downloading {filename} ...", end=" ", flush=True)
+        try:
+            hf_hub_download(
+                repo_id=_HF_REPO,
+                filename=filename,
+                local_dir=str(dest_dir),
+            )
+            print("ok")
+        except Exception as e:
+            print(f"FAILED: {e}")
+    print()
+
+
+# ---------------------------------------------------------------------------
 # Scarnet clone + compile
 # ---------------------------------------------------------------------------
 
@@ -390,6 +449,9 @@ def main():
     src.add_argument("--ir-dir",
                      help=".ll file or directory of .ll files to evaluate directly")
 
+    ap.add_argument("--fetch-hf",    action="store_true",
+                    help="Download the 4 published checkpoints from HuggingFace before "
+                         "scoring (requires: pip install huggingface_hub)")
     ap.add_argument("--keep-ir",     default=None, metavar="DIR",
                     help="With --scarnet: save compiled IR to this directory so you "
                          "can reuse it with --ir-dir on later runs")
@@ -409,6 +471,11 @@ def main():
 
     model_dir = Path(args.model_dir)
     tmpdir: Path | None = None
+
+    # -- Fetch HuggingFace models -------------------------------------------------
+    if args.fetch_hf:
+        model_dir.mkdir(parents=True, exist_ok=True)
+        _fetch_hf_models(model_dir)
 
     # -- Resolve IR source -------------------------------------------------------
     if args.scarnet:
