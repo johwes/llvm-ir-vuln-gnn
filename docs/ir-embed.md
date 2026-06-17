@@ -2528,10 +2528,16 @@ vulnerable and clean complex functions.
 
 **Root cause — `dispatch` is the blocking false positive.**
 `dispatch` is one of 3 functions (along with `main` and `session_consume_frag`) that
-llvmlite cannot parse (LLVM 15 opaque pointer IR incompatibility). The block model gives
-`dispatch` a score of 78.3% — its highest false positive. Because no instruction model
-can score it, both max and mean ensembles inherit this score without counterweight.
-Max keeps it at 78.3% (rank 2). Mean keeps it at 78.3% (one data point, no dilution).
+llvmlite cannot parse. Root cause: **clang 21 (LLVM 21) vs llvmlite 0.47.0 (LLVM 20)**
+— a one-version toolchain gap. The 3 functions use an IR construct introduced in LLVM 21
+that llvmlite's LLVM 20 parser rejects. The 16 parseable functions use IR that happens
+to be compatible with both versions. Fix: upgrade to llvmlite 0.48.0 (LLVM 21) when
+released, or compile scarnet with clang-20.
+
+The block model gives `dispatch` a score of 78.3% — its highest false positive.
+Because no instruction model can score it, both max and mean ensembles inherit this
+score without counterweight. Max keeps it at 78.3% (rank 2). Mean keeps it at 78.3%
+(one data point, no dilution).
 
 In both ensembles, `dispatch` displaces a true positive from the top-13.
 
