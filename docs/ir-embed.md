@@ -1,8 +1,14 @@
-# Experiment: IR Structural Embedding — Opcode Histogram Baseline
+# GNN Vulnerability Detector — LLVM IR Experiments
 
-**Code:** `experiments/ir_embed_demo/`  
-**Hypothesis:** `docs/research.md` — Contrastive structural embeddings over LLVM IR  
-**Status:** **COMPLETE (20 experiments).** §7 instruction-level GNN: 58.00%; §8 BigVul instr-level triplet collapsed (pair-sim 0.9984→0.9995); §9 scarnet real-world validation: 10/13 known-vulnerable functions in top-13 of 19 (77% P/R, -O0 -fno-inline). §10b FCL+SAGPooling: 47.58% k-NN, pair-sim 0.9992 — **contrastive learning branch closed** (3/3 experiments collapsed; structural invariance of patches is the binding constraint). Deployed as zero-cost ranker. Three semantic false negatives (format string, null deref, off-by-one) are LLM domain. Pipeline deliverable: block-level GNN 57.84% (`model.pt`). §13 Tier 1 features (Perfograph + call categorization): instruction-level best 58.75% (+0.75pp over §7), block-level 56.75% (below §4d baseline). §14 VSDG memory ordering edges: 57.47% (state edges add density without benefit). §15 register name embedding: 57.47% (name bucket hashing does not generalize across codebases). **IR feature engineering track closed — ceiling confirmed at ~57–58%.** §16 static analysis flags: 57.15% (14% coverage bottleneck). §17 taint propagation: 58.00% (+0.85pp), 82% ceiling miss rate. §18 full sweep on scarnet (19/19 functions, sibling-stub fix): **§12 PDG slice 84.6% P/R**; §13/§17 76.9%; §15/§16 61.5%; block model 69.2%. §19 ensemble (max and mean): neither beats best single model — dispatch FP (78.3%, block only) anchors both ensembles. 84.6% is the practical single-model ceiling. §20 zero-shot transfer to zlib v1.2.11 (148 functions): CVE-2018-25032 (`deflate_stored`) at median rank 13, mean MRR 0.133 (3.5× random); §15 best (rank 2). Transfer confirmed.
+**Status:** Complete — 20 experiments  
+**Models:** `johnnywesterlund/scar-gnn-defect-detector` on Hugging Face  
+**Code:** `github.com/johwes/llvm-ir-vuln-gnn`
+
+| Benchmark | Best result |
+|---|---|
+| Devign test accuracy | 58.75% (§13 Perfograph) — ceiling ~58%, explained below |
+| scarnet real-world P/R | **84.6%** (§12 PDG slice, 11/13 known-vulnerable) |
+| zlib v1.2.11 CVE rank | **top 10 / 148** functions, 4 of 9 models, zero-shot |
 
 ---
 
