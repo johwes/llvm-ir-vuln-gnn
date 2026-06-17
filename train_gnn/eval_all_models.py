@@ -604,57 +604,56 @@ def main():
         print()
         summary_rows.append(row)
 
-    # Compute ensemble (max score per function across all models)
-    ensemble_ranked: list[tuple[str, float]] = []
+    # Compute ensembles (max and mean score per function across all models)
+    ensemble_max: list[tuple[str, float]] = []
+    ensemble_mean: list[tuple[str, float]] = []
     if len(summary_rows) > 1:
-        best: dict[str, float] = {}
+        score_lists: dict[str, list[float]] = {}
         for row in summary_rows:
             for fn_name, score in row["ranked"]:
-                if fn_name not in best or score > best[fn_name]:
-                    best[fn_name] = score
-        ensemble_ranked = sorted(best.items(), key=lambda x: x[1], reverse=True)
+                score_lists.setdefault(fn_name, []).append(score)
+        ensemble_max  = sorted(
+            ((fn, max(scores)) for fn, scores in score_lists.items()),
+            key=lambda x: x[1], reverse=True)
+        ensemble_mean = sorted(
+            ((fn, sum(scores) / len(scores)) for fn, scores in score_lists.items()),
+            key=lambda x: x[1], reverse=True)
+
+    def _print_ranked(label: str, ranked: list[tuple[str, float]]) -> None:
+        boundary = top_k if top_k else len(ranked)
+        print(f"=== {label} ===")
+        print(f"  {'Rank':>4}  {'Function':<45}  {'Score':>6}  {'Vuln?':>5}")
+        print(f"  {'----':>4}  {'-'*45}  {'------':>6}  {'-----':>5}")
+        for i, (fn, score) in enumerate(ranked, 1):
+            if i == boundary + 1:
+                print(f"  {'----':>4}  {'-'*45}  {'------':>6}  (below top-{boundary})")
+            vuln_marker = "YES" if fn in answer_key else "no" if answer_key else ""
+            print(f"  {i:>4}  {fn:<45}  {score:>5.1%}  {vuln_marker:>5}")
+        print()
 
     # Per-model ranked lists
     if not args.summary_only:
         for row in summary_rows:
-            ranked = row["ranked"]
-            if not ranked:
-                continue
-            print(f"=== {row['checkpoint']}  ({row['label']}) ===")
-            boundary = top_k if top_k else len(ranked)
-            print(f"  {'Rank':>4}  {'Function':<45}  {'Score':>6}  {'Vuln?':>5}")
-            print(f"  {'----':>4}  {'-'*45}  {'------':>6}  {'-----':>5}")
-            for i, (fn, score) in enumerate(ranked, 1):
-                if i == boundary + 1:
-                    print(f"  {'----':>4}  {'-'*45}  {'------':>6}  (below top-{boundary})")
-                vuln_marker = ""
-                if answer_key:
-                    vuln_marker = "YES" if fn in answer_key else "no"
-                print(f"  {i:>4}  {fn:<45}  {score:>5.1%}  {vuln_marker:>5}")
-            print()
-
-        if ensemble_ranked:
-            print(f"=== ENSEMBLE  (max score across all models) ===")
-            boundary = top_k if top_k else len(ensemble_ranked)
-            print(f"  {'Rank':>4}  {'Function':<45}  {'Score':>6}  {'Vuln?':>5}")
-            print(f"  {'----':>4}  {'-'*45}  {'------':>6}  {'-----':>5}")
-            for i, (fn, score) in enumerate(ensemble_ranked, 1):
-                if i == boundary + 1:
-                    print(f"  {'----':>4}  {'-'*45}  {'------':>6}  (below top-{boundary})")
-                vuln_marker = ""
-                if answer_key:
-                    vuln_marker = "YES" if fn in answer_key else "no"
-                print(f"  {i:>4}  {fn:<45}  {score:>5.1%}  {vuln_marker:>5}")
-            print()
+            if row["ranked"]:
+                _print_ranked(f"{row['checkpoint']}  ({row['label']})", row["ranked"])
+        if ensemble_max:
+            _print_ranked("ENSEMBLE (max score — inherits highest FP from any model)", ensemble_max)
+        if ensemble_mean:
+            _print_ranked("ENSEMBLE (mean score — regresses consistent FPs toward noise)", ensemble_mean)
 
     # Summary table
     if not summary_rows:
         return
 
-    ensemble_pr: dict = {}
-    if ensemble_ranked and answer_key and top_k:
-        n, prec, rec = _precision_recall(ensemble_ranked, answer_key, top_k)
-        ensemble_pr = {"hits": n, "prec": prec, "rec": rec}
+    ensemble_max_pr: dict  = {}
+    ensemble_mean_pr: dict = {}
+    if answer_key and top_k:
+        if ensemble_max:
+            n, p, r = _precision_recall(ensemble_max,  answer_key, top_k)
+            ensemble_max_pr  = {"hits": n, "prec": p, "rec": r}
+        if ensemble_mean:
+            n, p, r = _precision_recall(ensemble_mean, answer_key, top_k)
+            ensemble_mean_pr = {"hits": n, "prec": p, "rec": r}
 
     print("=" * 80)
     print("SUMMARY")
@@ -670,12 +669,18 @@ def main():
             rec_str  = f"{row['rec']:.1%}"  if row['rec']  is not None else "—"
             pr_cols = f"  {hits_str:>6}  {prec_str:>6}  {rec_str:>6}"
         print(f"  {row['checkpoint']:<24}  {row['label']:<35}  {row['devign']:>7}{pr_cols}")
-    if ensemble_ranked:
+
+    def _ensemble_row(tag: str, pr: dict) -> None:
         pr_cols = ""
-        if ensemble_pr:
-            hits_str = f"{ensemble_pr['hits']}/{len(answer_key)}"
-            pr_cols  = (f"  {hits_str:>6}  {ensemble_pr['prec']:.1%}  {ensemble_pr['rec']:.1%}")
-        print(f"  {'ENSEMBLE (max)':<24}  {'all models combined':<35}  {'—':>7}{pr_cols}")
+        if pr:
+            hits_str = f"{pr['hits']}/{len(answer_key)}"
+            pr_cols  = f"  {hits_str:>6}  {pr['prec']:.1%}  {pr['rec']:.1%}"
+        print(f"  {tag:<24}  {'all models combined':<35}  {'—':>7}{pr_cols}")
+
+    if ensemble_max:
+        _ensemble_row("ENSEMBLE (max)", ensemble_max_pr)
+    if ensemble_mean:
+        _ensemble_row("ENSEMBLE (mean)", ensemble_mean_pr)
     if answer_key:
         print(f"\n  K = {top_k}")
 
