@@ -454,6 +454,7 @@ def _setup_scarnet_ir(keep_ir: Path | None) -> tuple[Path, Path]:
         print(f"  compiling {rel:<30} ...", end=" ", flush=True)
         result = subprocess.run(
             ["clang", "-O0", "-fno-inline", "-S", "-emit-llvm",
+             "-Xclang", "-no-opaque-pointers",  # emit LLVM-14 typed-pointer IR for llvmlite
              "-I", str(clone_dir / "include"),
              "-o", str(ll_out), str(c_file)],
             capture_output=True,
