@@ -61,6 +61,7 @@ UPLOADS = [
     ("preprocess_slice.py",       "preprocess_slice.py",       "IR graph extractor §11 (DFG slice)"),
     ("preprocess_slice_pdg.py",   "preprocess_slice_pdg.py",   "IR graph extractor §12 (PDG slice)"),
     ("preprocess_slice_pdg_v3.py","preprocess_slice_pdg_v3.py","IR graph extractor §23 (PDG v3, sink_mask + CD cap)"),
+    ("preprocess_joern.py",       "preprocess_joern.py",       "Joern CPG extractor §26 (no compilation, 95% coverage)"),
     ("requirements.txt",          "requirements.txt",          "Python dependencies"),
 ]
 
