@@ -152,6 +152,8 @@ def process_split(items: list[dict], workers: int, label: str) -> list[dict]:
 
     vuln_surv   = ok_vuln   / n_vuln_in   * 100 if n_vuln_in   > 0 else 0
     benign_surv = ok_benign / n_benign_in * 100 if n_benign_in > 0 else 0
+    bias_str    = (f"{benign_surv/vuln_surv:.2f}x"
+                   if vuln_surv > 0 else "n/a (0% vuln survival)")
 
     node_counts = [g["x"].shape[0] for g in graphs]
     n_sliced    = sum(1 for g in graphs if g.get("_sliced", False))
@@ -159,7 +161,7 @@ def process_split(items: list[dict], workers: int, label: str) -> list[dict]:
     print(f"  Done [{label}]: {n_ok} graphs  ({ok_vuln} vuln / {ok_benign} benign)  "
           f"{n_fail} failed")
     print(f"  Survival:  vuln={vuln_surv:.1f}%  benign={benign_surv:.1f}%  "
-          f"bias={benign_surv/vuln_surv:.2f}x  "
+          f"bias={bias_str}  "
           f"(clang baseline: vuln=21.8% benign=37.0% bias=1.70x)")
     if node_counts:
         print(f"  Slice sizes: mean={np.mean(node_counts):.0f}  "
