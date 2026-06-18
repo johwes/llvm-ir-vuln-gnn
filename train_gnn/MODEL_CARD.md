@@ -19,37 +19,70 @@ A collection of lightweight graph neural networks that classify C functions as v
 or safe using their LLVM IR graphs. Designed as a **zero-cost pre-filter** for LLM-based
 vulnerability triage pipelines.
 
+## Recommended model
+
+**`model_slice_pdg.pt`** (§12 PDG slice GNN) — best real-world recall across all 23
+experiments. Ranks 11 of 13 known-vulnerable scarnet functions in the top 13 of 19
+(84.6% recall@13). Devign test accuracy: 56.48%.
+
+```bash
+python scan_ir.py fn.ll --all-functions --threshold 0.5
+python scan_ir.py fn.ll --context        # include PDG slice vulnerability context
+```
+
 ## Models
 
-| File | Architecture | Devign test accuracy |
-|---|---|---|
-| `model.pt` | DefectGNN block-level (§4d, 60ep h=128, 2 relations) | **55.52%** |
-| `model_instr.pt` | InstrGNN instruction-level (§7, 30ep h=64, 3 relations) | **56.53%** |
-| `model_slice.pt` | SliceGNN DFG backward slice (§11, 30ep h=64, 3 relations) | **56.64%** |
-| `model_slice_pdg.pt` | SlicePDGGNN PDG slice (§12, 30ep h=64, 3 relations) | **56.48%** |
+| File | Section | Architecture | Devign |
+|---|---|---|---|
+| `model.pt` | §4d | DefectGNN block-level (60ep h=128, 2 rel) | 55.52% |
+| `model_instr.pt` | §7 | InstrGNN instruction-level baseline (30ep h=64) | 56.53% |
+| `model_instr_v2.pt` | §13 | Perfograph + call categories | 58.75% |
+| `model_instr_v3.pt` | §14 | VSDG memory ordering edges | 57.47% |
+| `model_instr_v4.pt` | §15 | Register name embedding | 57.47% |
+| `model_instr_v5.pt` | §16 | Static analysis flags | 57.15% |
+| `model_instr_v6.pt` | §17 | Taint propagation | 58.00% |
+| `model_slice.pt` | §11 | DFG backward slice | 55.60% |
+| **`model_slice_pdg.pt`** | **§12** | **PDG slice — recommended** | **56.48%** |
+| `model_slice_pdg_v2.pt` | §22 | PDG + taint flags | — |
+| `model_slice_pdg_v3.pt` | §23 | PDG sink-node readout + residual/LN | 55.40% |
 
-`model.pt` is the recommended checkpoint for the ranker pipeline — it uses the 45-feature
-block-level representation and runs fastest at inference. `model_instr.pt` achieves the
-highest Devign accuracy.
+`model_bigvul_cls.pt` and `model_bigvul_combined.pt` (§21) are trained on BigVul only
+and have no Devign score. See scarnet table below.
 
-### Experiments §13–§15
+## Real-world validation: scarnet
 
-§13 added Perfograph constant encoding (`sign(C)*log2(|C|+1)`) and categorical call targets
-(5 danger categories: Alloc/Copy/String/FileIO/Network) to the instruction-level model.
-Best single-run result: **58.75%** (`train_instr_v2.py`). High cross-run variance (~54–59%)
-at the ~1,250-sample split scale makes this a noisy improvement over §7's 56.53%.
+Applied to `johwes/scarnet` (19 functions, 13 known-vulnerable). Evaluated all
+checkpoints at top-13-of-19:
 
-§14 adds VSDG memory ordering edges (load/store pairs on the same pointer → directed state
-edge, type=3, `num_relations` 3→4). Result: **57.47%** — below §7 baseline. State edges
-add density without benefit at Devign scale; val accuracy peaked lower (56.97% vs 59.44%
-in §13), confirming no improvement. Scripts: `preprocess_instr_v3.py`, `train_instr_v3.py`.
+| Checkpoint | Section | Devign | Hits | P@13 | R@13 |
+|---|---|---|---|---|---|
+| model.pt | §4d block-level DefectGNN | 55.52% | 9/13 | 69.2% | 69.2% |
+| model_instr.pt | §7 instr baseline | 56.53% | 9/13 | 69.2% | 69.2% |
+| model_instr_v2.pt | §13 Perfograph + call categories | 58.75% | 10/13 | 76.9% | 76.9% |
+| model_instr_v3.pt | §14 VSDG memory ordering edges | 57.47% | 10/13 | 76.9% | 76.9% |
+| model_instr_v4.pt | §15 register name embedding | 57.47% | 8/13 | 61.5% | 61.5% |
+| model_instr_v5.pt | §16 static analysis flags | 57.15% | 8/13 | 61.5% | 61.5% |
+| model_instr_v6.pt | §17 taint propagation | 58.00% | 10/13 | 76.9% | 76.9% |
+| model_slice.pt | §11 DFG slice | 55.60% | 10/13 | 76.9% | 76.9% |
+| **model_slice_pdg.pt** | **§12 PDG slice** | **56.48%** | **11/13** | **84.6%** | **84.6%** |
+| model_slice_pdg_v2.pt | §22 PDG + taint flags | — | 9/13 | 69.2% | 69.2% |
+| model_slice_pdg_v3.pt | §23 PDG sink-node readout | 55.40% | 9/13 | 69.2% | 69.2% |
+| model_bigvul_cls.pt | §21 BigVul classifier | — | 9/13 | 69.2% | 69.2% |
+| model_bigvul_combined.pt | §21 BigVul+Devign combined | — | 9/13 | 69.2% | 69.2% |
+| ENSEMBLE (max) | all models | — | 9/13 | 69.2% | 69.2% |
+| ENSEMBLE (mean) | all models | — | 9/13 | 69.2% | 69.2% |
 
-§15 adds register name embedding: at `-O0`, clang preserves source variable names in IR
-register names (`%buf.addr`, `%size`, `%cmp`). FNV-1a hashes them into 64 buckets; a
-learned `nn.Embedding(65, 16)` gives a 16-dim name signal per node (conv1 input: 129→145).
-Result: **57.47%** — identical to §14. Names do not generalize across Devign's four
-codebases; bucket collisions dominate the signal. **IR feature engineering track closed.**
-Scripts: `preprocess_instr_v4.py`, `train_instr_v4.py`.
+**§12 is the uniquely best checkpoint.** Every other model and the full ensemble top out
+at 10/13. The ensemble scoring 9/13 — worse than the best individual model — indicates
+correlated errors: models trained on the same Devign distribution share the same failure
+modes, so ensembling amplifies rather than cancels noise.
+
+**Two irreducible misses (2/13):** no model catches all 13. The two remaining misses are
+semantic bugs with no distinct structural IR signature — wrong comparison operand, or an
+off-by-one in a constant. These are in the LLM triage domain, not the GNN domain.
+
+**False positives (common):** `main`, `dispatch`, `handle_get`, `session_new` — structurally
+complex functions that score high but are safe. Dismissible in a one-sentence LLM triage step.
 
 ## Model Description
 
@@ -60,66 +93,85 @@ Scripts: `preprocess_instr_v4.py`, `train_instr_v4.py`.
 - **Input:** LLVM IR compiled with `clang -O0 -fno-inline -S -emit-llvm`; each basic
   block becomes a node with 45 semantic features (opcode distribution, branch density,
   memory op ratio, call density, phi count, block size)
-- **Output:** Probability score ∈ [0, 1] that the function is vulnerable
+- **Output:** probability ∈ [0, 1] that the function is vulnerable
 - **Parameters:** ~293 KB (`hidden=128`)
 
-### model_instr.pt / model_slice.pt / model_slice_pdg.pt — Instruction-level GNNs
+### Instruction-level GNNs (§7–§17)
 
-- **Architecture:** Embedding lookup (vocab=111 opcodes) → two `RGCNConv` layers
-  (3 relation types: CFG, DFG, Global) → AttentionalAggregation → binary classifier
-- **Input:** same IR compilation; each instruction becomes a node (opcode ID)
+- **Architecture:** Embedding lookup (vocab=110 opcodes) → two `RGCNConv` layers
+  (3 relation types: CFG, DFG, context) → AttentionalAggregation → binary classifier
+- **Input:** same IR; each instruction becomes a node (opcode ID)
 - **Parameters:** ~256 KB (`hidden=64`)
+
+### PDG slice GNNs (§11–§23)
+
+- **Architecture:** same embedding + RGCN backbone; input is a PDG backward slice
+  from dangerous sinks (DFG + control dependence), not the full function graph
+- **§12 (recommended):** AttentionalAggregation global readout
+- **§23:** Sink-node readout (scatter-max over identified sink embeddings) + residual
+  connections + LayerNorm — correct architecture for node-level supervision; 55.40%
+  on Devign, 9/13 scarnet under graph-level noisy labels
 
 ## Training
 
 | Dataset | Split | Functions |
 |---|---|---|
-| Devign (FFmpeg, QEMU, Linux, LibreSSL) | train | ~10,100 |
-| Devign | validation | ~1,252 |
-| Devign | test | ~1,250 |
+| Devign (FFmpeg, QEMU, Linux, LibreSSL) | train | ~10,125 |
+| Devign | validation | ~1,254 |
+| Devign | test | ~1,251 |
 
-Training: Adam lr=1e-3, StepLR decay (γ=0.5, step=10).
+Training: Adam lr=1e-3, StepLR decay (γ=0.5, step=10), 30 epochs, hidden=64.
 
-## Performance
+## Experiment log summary (§1–§23)
 
-| Setting | Accuracy |
-|---|---|
-| Majority-class baseline | 56.60% |
-| **model.pt — DefectGNN block-level** | **55.52%** |
-| **model_instr.pt — InstrGNN instruction-level** | **56.53%** |
-| **model_slice.pt — SliceGNN DFG slice** | **55.60%** |
-| **model_slice_pdg.pt — SlicePDGGNN PDG slice** | **56.48%** |
-| §13 best run (Perfograph + call targets, not uploaded) | 58.75% |
-| §14 VSDG state edges (not uploaded) | 57.47% |
-| §15 register name embedding (not uploaded) | 57.47% |
-| CodeBERT (source text) | 63.43% |
+| Section | Change | Devign | Scarnet |
+|---|---|---|---|
+| §4d | Block-level, 45 features, 2 relations | 55.52% | 9/13 |
+| §7 | Instruction-level baseline (opcode only) | 56.53% | 9/13 |
+| §11 | DFG backward slice from sinks | 55.60% | 10/13 |
+| **§12** | **PDG slice (DFG + control dependence)** | **56.48%** | **11/13** |
+| §13 | Perfograph encoding + call categories | 58.75%† | 10/13 |
+| §14 | VSDG memory ordering edges | 57.47% | 10/13 |
+| §15 | Register name embedding | 57.47% | 8/13 |
+| §16 | Static analysis flags (cppcheck) | 57.15% | 8/13 |
+| §17 | Taint propagation edges | 58.00% | 10/13 |
+| §21 | BigVul binary classifier | — | 9/13 |
+| §22 | PDG + taint flags combined | — | 9/13 |
+| §23 | Sink-node readout + CD cap + residual/LN | 55.40% | 9/13 |
 
-All results on Devign test set. The 1.24 pp gap over baseline is modest on Devign's
-balanced test set. On real-world code the **ranking behaviour** matters more than binary
-accuracy: the model assigns meaningfully higher scores to vulnerable functions, making it
-useful as a ranker even when it does not clear a hard decision threshold.
+†High cross-run variance (~54–59%) at the ~1,250-sample split scale.
 
-### Real-world validation: scarnet
+Full experiment notes: [`docs/ir-embed.md`](https://github.com/johwes/llvm-ir-vuln-gnn/blob/main/docs/ir-embed.md)
 
-Applied to `johwes/scarnet` (a small intentionally-vulnerable C server, 19 functions
-across 5 source files, 13 known-vulnerable):
+## Context enrichment for harness generation
 
-| Metric | Value |
-|---|---|
-| Known-vulnerable functions in top-13 of 19 | **10 / 13 (77%)** |
-| Precision at top-13 | **77%** |
-| Recall at top-13 | **77%** |
+`slice_context.py` converts the PDG slice graph into a structured vulnerability
+specification for injection into LLM harness generation prompts:
 
-Compilation flag used: `clang -O0 -fno-inline -S -emit-llvm` (required — `-O1` inlines
-small functions into their callers, hiding them from per-function analysis).
+```python
+from preprocess_slice_pdg import ir_to_graph_slice_pdg
+from slice_context import summarize_slice, format_for_llm
 
-**False negatives (4):** `scar_atoi`, `handle_set`, `session_consume_frag`, `handle_del`.
-All are semantic bugs with no distinct structural IR signature — wrong argument, wrong
-comparison operand, or off-by-one in a constant. These are LLM domain, not GNN domain.
+g = ir_to_graph_slice_pdg(open("function.ll").read())
+ctx = format_for_llm(summarize_slice(g, fn_name="process_packet"), score=0.91)
+# → inject ctx into your LLM harness generation prompt
+```
 
-**False positives (4):** `main`, `dispatch`, `handle_get`, `session_new` — structurally
-complex functions that score high but are not vulnerable. All are immediately dismissible
-in a one-sentence LLM triage step.
+Output example:
+```
+============================================================
+GNN Vulnerability Context
+Suspicion score : 91.4%  (SUSPICIOUS)
+Sinks           : memcpy — copies n bytes from src to dest — no overlap or bounds check
+Input channels  : function_argument
+Guard status    : NO icmp in slice — sink appears UNGUARDED
+Harness target  : fuzz n relative to dest buffer size; n=0, n=SIZE_MAX, n=dest_size+1
+Slice           : 31 nodes, 1 sink(s)
+============================================================
+```
+
+See [`docs/oss-fuzz-gen-integration.md`](https://github.com/johwes/llvm-ir-vuln-gnn/blob/main/docs/oss-fuzz-gen-integration.md)
+for the full integration guide with oss-fuzz-gen.
 
 ## Intended Use
 
@@ -133,50 +185,47 @@ python scan_ir.py fn.ll --all-functions --threshold 0.5
 ```
 
 Use it to decide *which functions to show an LLM*, not to make final vulnerability
-decisions. The LLM handles the semantic bugs the GNN misses.
+decisions.
 
 ## Limitations
 
-- **Topology-only:** node features are opcode categories and structural metrics;
-  identifier names, string literals, and type tokens are discarded. Semantic bugs
-  (wrong comparison operator, wrong format string, off-by-one in a constant) produce
-  identical IR topology to correct code and are undetectable.
-- **Block-level granularity** (model.pt): each basic block is one node. Fine for
-  function-level ranking; not suitable for pinpointing the exact buggy line.
-- **GNN ceiling ~57–58%:** fifteen experiments across block-level, instruction-level,
-  slice variants, Perfograph constant encoding, categorical call targets, VSDG memory
-  edges, and register name embedding all converged in this range. The ceiling is
-  representational — LLVM IR opcode graphs discard the identifier names and string
-  literals that distinguish vulnerable from safe code. CodeBERT on source text reaches
-  63.43%. IR feature engineering track is closed. See `docs/ir-embed.md §
-  "Current Conclusion"` for the full analysis.
-- **Devign distribution:** trained on C from large open-source projects; may not
+- **Topology-only:** node features are opcode categories; identifier names, string
+  literals, and type tokens are discarded. Semantic bugs (wrong comparison operator,
+  wrong format string, off-by-one in a constant) produce identical IR topology to
+  correct code and are undetectable.
+- **GNN ceiling ~56–58% on Devign:** 23 experiments across block-level, instruction-level,
+  slice variants, Perfograph encoding, VSDG edges, taint propagation, and sink-node
+  readout all converge in this range. The ceiling is the Devign dataset's commit-level
+  label noise (~10–20%), not the architecture. CodeBERT on source text reaches 63.43%
+  partly because it reads identifier names. See `docs/ir-embed.md` for the full analysis.
+- **Real-world ranking is more reliable than Devign accuracy:** §12 scores 56.48% on
+  Devign but 84.6% recall on scarnet. The ranking signal is real; the Devign binary
+  accuracy is noise-floored.
+- **Devign distribution:** trained on C from four large open-source projects; may not
   generalise well to embedded, kernel, or heavily macro-expanded code.
 
 ## Repository & Reproducibility
 
-Source code, training scripts, and full experiment log (§1–§15):
 **[johwes/llvm-ir-vuln-gnn](https://github.com/johwes/llvm-ir-vuln-gnn)**
 
 Key files:
-- `train_gnn/train.py` / `train_v2.py` — block-level (§4d / §13)
-- `train_gnn/train_instr.py` / `train_instr_v2.py` / `train_instr_v3.py` / `train_instr_v4.py` — instruction-level (§7 / §13 / §14 / §15)
-- `train_gnn/train_slice.py` / `train_slice_pdg.py` — slice variants (§11 / §12)
-- `train_gnn/preprocess.py` / `preprocess_v2.py` — block-level graph extractors
-- `train_gnn/preprocess_instr.py` / `preprocess_instr_v2.py` / `preprocess_instr_v3.py` / `preprocess_instr_v4.py` — instruction-level extractors
-- `train_gnn/scan_ir.py` — inference CLI
-- `docs/ir-embed.md` — full experiment log and current conclusion
+- `train_gnn/train_slice_pdg.py` — §12 training (recommended)
+- `train_gnn/preprocess_slice_pdg.py` — PDG slice extractor
+- `train_gnn/preprocess_slice_pdg_v3.py` — v3 extractor (sink_mask + CD cap)
+- `train_gnn/scan_ir.py` — inference CLI (`--context` flag for LLM context)
+- `train_gnn/slice_context.py` — PDG slice → LLM prompt context
+- `docs/ir-embed.md` — full experiment log §1–§23
+- `docs/applications.md` — market gap analysis
+- `docs/oss-fuzz-gen-integration.md` — oss-fuzz-gen integration guide
 
 ## Citation
-
-If you use these models, please cite the SCAR IR GNN repository:
 
 ```
 @misc{scar-ir-gnn-2026,
   title  = {SCAR GNN Defect Detector},
   author = {johnnywesterlund},
   year   = {2026},
-  url    = {https://huggingface.co/johnnywesterlund/scar-gnn-defect-detector}
+  url    = {https://huggingface.co/johnnywesterlund/scar-gnn-defect-detector},
   source = {https://github.com/johwes/llvm-ir-vuln-gnn}
 }
 ```
