@@ -231,34 +231,59 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
         sink_strs  = ["no explicit dangerous sink identified — scored by full-graph structure"]
         hint_parts = ["fuzz all inputs broadly"]
 
+    # ---- guard density -------------------------------------------------
+    n_sinks = len(sinks)
+    if n_sinks == 0:
+        guard_density       = 0.0
+        guard_density_label = "no sinks"
+    elif not has_guard:
+        guard_density       = float("inf")
+        guard_density_label = "UNGUARDED"
+    else:
+        guard_density = n_sinks / guard_count   # sinks per guard — higher = worse
+        if guard_density >= 10:
+            guard_density_label = "very sparse"
+        elif guard_density >= 5:
+            guard_density_label = "sparse"
+        elif guard_density >= 2:
+            guard_density_label = "moderate"
+        else:
+            guard_density_label = "well-covered"
+
     channel_note = " or ".join(input_channels)
-    guard_note   = (
-        f"{guard_count} comparison(s) in slice — verify they guard the sink path"
-        if has_guard
-        else "no comparison (icmp) in slice — sink appears UNGUARDED"
-    )
+    if not has_guard:
+        guard_note = "no comparison (icmp) in slice — sink appears UNGUARDED"
+    elif n_sinks == 0:
+        guard_note = f"{guard_count} comparison(s) in slice"
+    else:
+        guard_note = (
+            f"{guard_count} guard(s) / {n_sinks} sink(s)"
+            f" = {guard_density:.1f} sinks/guard ({guard_density_label})"
+        )
 
     natural_language = (
         f"Function `{fn_name}` contains: {'; '.join(sink_strs)}. "
         f"Input originates from: {channel_note}. "
         f"Guard status: {guard_note}. "
-        f"Slice: {N} nodes, {len(sinks)} sink(s) ({len(unique_sinks)} unique type(s))."
+        f"Slice: {N} nodes, {n_sinks} sink(s) ({len(unique_sinks)} unique type(s))."
     )
 
     harness_hint = " | ".join(hint_parts)
 
     return {
-        "fn_name":          fn_name,
-        "slice_size":       N,
-        "n_sinks":          len(sinks),
-        "n_unique_sinks":   len(unique_sinks),
-        "sinks":            sinks,
-        "sink_counts":      dict(sink_counts),
-        "input_channels":   input_channels,
-        "guard_count":      guard_count,
-        "has_guard":        has_guard,
-        "natural_language": natural_language,
-        "harness_hint":     harness_hint,
+        "fn_name":            fn_name,
+        "slice_size":         N,
+        "n_sinks":            n_sinks,
+        "n_unique_sinks":     len(unique_sinks),
+        "sinks":              sinks,
+        "sink_counts":        dict(sink_counts),
+        "input_channels":     input_channels,
+        "guard_count":        guard_count,
+        "has_guard":          has_guard,
+        "guard_density":      guard_density,
+        "guard_density_label":guard_density_label,
+        "natural_language":   natural_language,
+        "harness_hint":       harness_hint,
     }
 
 
@@ -304,9 +329,16 @@ def format_for_llm(summary: dict, score: float | None = None,
 
     lines.append("Input channels  : " + ", ".join(summary["input_channels"]))
 
-    guard = (f"{summary['guard_count']} comparison(s) present — verify they guard sink"
-             if summary["has_guard"]
-             else "NO icmp in slice — sink appears UNGUARDED")
+    n_sinks = summary["n_sinks"]
+    gc      = summary["guard_count"]
+    if not summary["has_guard"]:
+        guard = "NO icmp in slice — sink appears UNGUARDED"
+    elif n_sinks == 0:
+        guard = f"{gc} comparison(s) present"
+    else:
+        gd    = summary.get("guard_density", n_sinks / gc)
+        label = summary.get("guard_density_label", "")
+        guard = f"{gc} guard(s) / {n_sinks} sink(s) = {gd:.1f} sinks/guard ({label})"
     lines.append("Guard status    : " + guard)
     lines.append("Harness target  : " + summary["harness_hint"])
     lines.append(f"Slice           : {summary['slice_size']} nodes, "
