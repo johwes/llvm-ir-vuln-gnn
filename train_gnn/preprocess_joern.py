@@ -133,9 +133,11 @@ _EDGE_MAP = {
 # Dot file parser
 # ---------------------------------------------------------------------------
 
-_NODE_RE = re.compile(r'"(\d+)"\s*\[([^\]]+)\]')
-_EDGE_RE = re.compile(r'"(\d+)"\s*->\s*"(\d+)"\s*\[([^\]]*)\]')
-_ATTR_RE = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"')
+_QUOTED   = r'"(?:[^"\\]|\\.)*"'
+_BODY     = r'(?:[^\]"]*|' + _QUOTED + r')*'
+_NODE_RE  = re.compile(r'"(\d+)"\s*\[(' + _BODY + r')\]', re.DOTALL)
+_EDGE_RE  = re.compile(r'"(\d+)"\s*->\s*"(\d+)"\s*\[(' + _BODY + r')\]', re.DOTALL)
+_ATTR_RE  = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"', re.DOTALL)
 
 
 def _attrs(s: str) -> dict:
@@ -170,8 +172,8 @@ def _parse_dot(dot_text: str) -> tuple[dict, list, list]:
     method_ids = [
         nid for nid, a in nodes.items()
         if (a.get("label") == "METHOD"
-            and a.get("IS_EXTERNAL", "true") == "false"
-            and a.get("NAME", "") not in ("<global>", ""))
+            and a.get("IS_EXTERNAL", "false") != "true"
+            and a.get("NAME", "") not in ("<global>", "", "<unknown>"))
     ]
 
     return nodes, edges, method_ids
