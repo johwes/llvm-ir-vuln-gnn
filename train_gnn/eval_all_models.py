@@ -298,6 +298,13 @@ REGISTRY = [
         "load_model": _load_pdg,
     },
     {
+        "checkpoint": "model_slice_pdg_v5.pt",
+        "label":      "§25  PDG slice (PrimeVul training)",
+        "devign":     "—",
+        "preprocess": _pp_slice_pdg,
+        "load_model": _load_pdg,
+    },
+    {
         "checkpoint": "model_bigvul_cls.pt",
         "label":      "§21  BigVul binary classifier",
         "devign":     "—",

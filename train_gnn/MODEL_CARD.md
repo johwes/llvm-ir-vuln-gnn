@@ -46,6 +46,7 @@ python scan_ir.py fn.ll --context        # include PDG slice vulnerability conte
 | `model_slice_pdg_v2.pt` | §22 | PDG + taint flags | — |
 | `model_slice_pdg_v3.pt` | §23 | PDG sink-node readout + residual/LN | 55.40% |
 | `model_slice_pdg_v4.pt` | §24 | PDG + intrinsic-aware sinks (retrain) | 55.00% |
+| `model_slice_pdg_v5.pt` | §25 | PDG slice trained on PrimeVul | TBD |
 
 `model_bigvul_cls.pt` and `model_bigvul_combined.pt` (§21) are trained on BigVul only
 and have no Devign score. See scarnet table below.
@@ -69,6 +70,7 @@ checkpoints at top-13-of-19:
 | model_slice_pdg_v2.pt | §22 PDG + taint flags | — | 9/13 | 69.2% | 69.2% |
 | model_slice_pdg_v3.pt | §23 PDG sink-node readout | 55.40% | 9/13 | 69.2% | 69.2% |
 | model_slice_pdg_v4.pt | §24 PDG + intrinsic-aware sinks | 55.00% | 10/13 | 76.9% | 76.9% |
+| model_slice_pdg_v5.pt | §25 PDG slice (PrimeVul training) | TBD | TBD | TBD | TBD |
 | model_bigvul_cls.pt | §21 BigVul classifier | — | 9/13 | 69.2% | 69.2% |
 | model_bigvul_combined.pt | §21 BigVul+Devign combined | — | 9/13 | 69.2% | 69.2% |
 | ENSEMBLE (max) | all models | — | 9/13 | 69.2% | 69.2% |
@@ -140,6 +142,8 @@ Training: Adam lr=1e-3, StepLR decay (γ=0.5, step=10), 30 epochs, hidden=64.
 | §21 | BigVul binary classifier | — | 9/13 |
 | §22 | PDG + taint flags combined | — | 9/13 |
 | §23 | Sink-node readout + CD cap + residual/LN | 55.40% | 9/13 |
+| §24 | PDG + intrinsic-aware sinks (retrain) | 55.00% | 10/13 |
+| §25 | PDG slice trained on PrimeVul | TBD | TBD |
 
 †High cross-run variance (~54–59%) at the ~1,250-sample split scale.
 
@@ -212,6 +216,8 @@ decisions.
 
 Key files:
 - `train_gnn/train_slice_pdg.py` — §12 training (recommended)
+- `train_gnn/train_slice_pdg_v5.py` — §25 PrimeVul training
+- `train_gnn/preprocess_primevul.py` — PrimeVul dataset preprocessor
 - `train_gnn/preprocess_slice_pdg.py` — PDG slice extractor
 - `train_gnn/preprocess_slice_pdg_v3.py` — v3 extractor (sink_mask + CD cap)
 - `train_gnn/scan_ir.py` — inference CLI (`--context` flag for LLM context)
