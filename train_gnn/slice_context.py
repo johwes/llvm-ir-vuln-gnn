@@ -190,20 +190,35 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
     guard_count = sum(1 for opc in opcodes if opc in ICMP_OPCODES)
     has_guard   = guard_count > 0
 
-    # ---- natural language + harness hint --------------------------------
+    # ---- deduplicate sinks by function name (preserve first-seen order) ----
+    from collections import Counter, OrderedDict
+    sink_counts: dict[str, int] = Counter(s.get("fn") or "unknown" for s in sinks)
+    seen: set[str] = set()
+    unique_sinks = []
+    for s in sinks:
+        fn = s.get("fn") or "unknown"
+        if fn not in seen:
+            seen.add(fn)
+            unique_sinks.append(s)
+
+    # ---- natural language + harness hint (deduplicated) -----------------
     sink_strs  = []
     hint_parts = []
 
-    for sink in sinks:
-        fn = sink.get("fn") or "unknown"
-        info = _SINK_INFO.get(fn)
+    for s in unique_sinks:
+        fn    = s.get("fn") or "unknown"
+        count = sink_counts[fn]
+        info  = _SINK_INFO.get(fn)
+        suffix = f" ×{count}" if count > 1 else ""
         if info:
             what, probe = info
-            sink_strs.append(f"`{fn}` ({what})")
-            hint_parts.append(f"fuzz {probe}")
+            sink_strs.append(f"`{fn}`{suffix} ({what})")
+            if f"fuzz {probe}" not in hint_parts:
+                hint_parts.append(f"fuzz {probe}")
         else:
-            sink_strs.append(f"`{fn}` (dangerous operation)")
-            hint_parts.append("fuzz all arguments")
+            sink_strs.append(f"`{fn}`{suffix} (dangerous operation)")
+            if "fuzz all arguments" not in hint_parts:
+                hint_parts.append("fuzz all arguments")
 
     if not sinks:
         sink_strs  = ["no explicit dangerous sink identified — scored by full-graph structure"]
@@ -220,7 +235,7 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
         f"Function `{fn_name}` contains: {'; '.join(sink_strs)}. "
         f"Input originates from: {channel_note}. "
         f"Guard status: {guard_note}. "
-        f"Slice: {N} nodes, {len(sinks)} dangerous sink(s)."
+        f"Slice: {N} nodes, {len(sinks)} sink(s) ({len(unique_sinks)} unique type(s))."
     )
 
     harness_hint = " | ".join(hint_parts)
@@ -229,7 +244,9 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
         "fn_name":          fn_name,
         "slice_size":       N,
         "n_sinks":          len(sinks),
+        "n_unique_sinks":   len(unique_sinks),
         "sinks":            sinks,
+        "sink_counts":      dict(sink_counts),
         "input_channels":   input_channels,
         "guard_count":      guard_count,
         "has_guard":        has_guard,
@@ -260,12 +277,20 @@ def format_for_llm(summary: dict, score: float | None = None,
         flag = "SUSPICIOUS" if score >= 0.5 else "low suspicion"
         lines.append(f"Suspicion score : {score:.1%}  ({flag})")
 
+    # Deduplicate: one label per unique sink type, with ×N count
+    sink_counts = summary.get("sink_counts", {})
+    seen: set[str] = set()
     sink_labels = []
     for s in summary["sinks"]:
         fn = s.get("fn", "unknown")
-        info = _SINK_INFO.get(fn)
-        short = info[0][:55] if info else "dangerous operation"
-        sink_labels.append(f"{fn} — {short}")
+        if fn in seen:
+            continue
+        seen.add(fn)
+        info  = _SINK_INFO.get(fn)
+        short = info[0][:50] if info else "dangerous operation"
+        count = sink_counts.get(fn, 1)
+        tag   = f" ×{count}" if count > 1 else ""
+        sink_labels.append(f"{fn}{tag} — {short}")
     lines.append("Sinks           : " + ("; ".join(sink_labels) if sink_labels
                                           else "none identified"))
 
