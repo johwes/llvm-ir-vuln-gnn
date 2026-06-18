@@ -297,11 +297,17 @@ def _extract_slice_pdg_v3(x, edge_index, edge_type, mock_names,
 _MAX_CD_HOPS_DEFAULT = 2
 
 
-def ir_to_graph_slice_pdg_v3(ir_text, max_cd_hops: int = _MAX_CD_HOPS_DEFAULT):
+def ir_to_graph_slice_pdg_v3(ir_text, max_cd_hops: int = _MAX_CD_HOPS_DEFAULT,
+                              fn_name: str | None = None):
     """
     Build instruction-level graph then extract PDG v3 backward slice.
 
     Same 5-pass algorithm as §12.  Adds max_cd_hops cap and sink_mask output.
+
+    fn_name: if given, select that specific function from a multi-function
+             module. If None, picks the last non-declaration (single-function
+             mode, original behaviour).
+
     Returns None if parsing fails or result has < 2 nodes.
     Caller adds 'y' and 'idx'.
     """
@@ -312,8 +318,13 @@ def ir_to_graph_slice_pdg_v3(ir_text, max_cd_hops: int = _MAX_CD_HOPS_DEFAULT):
 
     target_fn = None
     for fn in mod.functions:
-        if not fn.is_declaration:
+        if fn.is_declaration:
+            continue
+        if fn_name is None:
+            target_fn = fn          # last non-declaration (original behaviour)
+        elif fn.name == fn_name:
             target_fn = fn
+            break
     if target_fn is None:
         return None
 

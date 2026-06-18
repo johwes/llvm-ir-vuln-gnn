@@ -76,14 +76,18 @@ def _score_graph(g, model, model_type: str):
 
 
 def _context_for_ir(ir_text: str, fn_name: str) -> str | None:
-    """Return formatted vulnerability context block for a single IR function, or None."""
+    """Return formatted vulnerability context block for a named IR function, or None.
+
+    Passes the full IR module so that cross-function calls (in multi-function
+    files) remain visible to llvmlite and don't cause 'undefined value' errors.
+    """
     try:
         from preprocess_slice_pdg import ir_to_graph_slice_pdg
         from slice_context import summarize_slice, format_for_llm
     except ImportError:
         return None
 
-    g = ir_to_graph_slice_pdg(ir_text)
+    g = ir_to_graph_slice_pdg(ir_text, fn_name=fn_name)
     if g is None:
         return None
 
@@ -93,22 +97,30 @@ def _context_for_ir(ir_text: str, fn_name: str) -> str | None:
 
 def scan_all_fns(ir_text, model, model_type, threshold, show_context):
     """Score every non-declaration function in the IR. Returns list sorted by score desc."""
-    results = []
-    segs = re.split(r'(?=^define\b)', ir_text, flags=re.MULTILINE)
-    for seg in segs:
-        seg = seg.strip()
-        if not seg.startswith("define"):
-            continue
-        m = _FN_NAME_RE.search(seg[:300])
-        if not m:
-            continue
-        fn_name = m.group(1)
+    import llvmlite.binding as _llvm
+    from preprocess_slice_pdg import ir_to_graph_slice_pdg
 
+    # Parse full module once to enumerate functions — avoids per-segment splits
+    # that lose cross-function declares present in multi-function IR files.
+    try:
+        _mod = _llvm.parse_assembly(ir_text)
+    except Exception:
+        return []
+    fn_names = [fn.name for fn in _mod.functions if not fn.is_declaration]
+
+    results = []
+    for fn_name in fn_names:
         if model_type == "slice_pdg":
-            from preprocess_slice_pdg import ir_to_graph_slice_pdg
-            g = ir_to_graph_slice_pdg(seg)
+            g = ir_to_graph_slice_pdg(ir_text, fn_name=fn_name)
         else:
-            g = ir_to_graph(seg)
+            # basic model: still needs per-function segment (different preprocessor)
+            segs = re.split(r'(?=^define\b)', ir_text, flags=re.MULTILINE)
+            g = None
+            for seg in segs:
+                m = _FN_NAME_RE.search(seg[:300])
+                if m and m.group(1) == fn_name:
+                    g = ir_to_graph(seg)
+                    break
         if g is None:
             continue
 
@@ -116,9 +128,8 @@ def scan_all_fns(ir_text, model, model_type, threshold, show_context):
 
         ctx = None
         if show_context:
-            from preprocess_slice_pdg import ir_to_graph_slice_pdg
             from slice_context import summarize_slice, format_for_llm
-            cg = ir_to_graph_slice_pdg(seg) if model_type != "slice_pdg" else g
+            cg = ir_to_graph_slice_pdg(ir_text, fn_name=fn_name) if model_type != "slice_pdg" else g
             if cg is not None:
                 ctx = format_for_llm(summarize_slice(cg, fn_name=fn_name), score=prob)
 

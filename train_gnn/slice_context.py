@@ -303,40 +303,30 @@ def _demo_cli():
     import re
     ir_text = Path(args.ir_file).read_text(errors="replace")
 
-    # Split into per-function IR segments, preserving module-level preamble
-    # (declares, globals) so that dangerous sink detection works per-function.
-    _NAME_RE = re.compile(r'@([\w.$]+)\s*\(')
-    def _split_functions(text):
-        segs = re.split(r'(?=^define\b)', text, flags=re.MULTILINE)
-        preamble = segs[0] if segs and not segs[0].strip().startswith("define") else ""
-        out = []
-        for seg in segs:
-            seg = seg.strip()
-            if not seg.startswith("define"):
-                continue
-            m = _NAME_RE.search(seg[:300])
-            if m:
-                # Prepend module preamble so declares/globals are visible
-                out.append((m.group(1), preamble + "\n" + seg))
-        return out
-
-    functions = _split_functions(ir_text)
-    if not functions:
-        # Single-function file — try directly
-        m = re.search(r'@([\w.$]+)\s*\(', ir_text[:500])
-        fn_name = m.group(1) if m else Path(args.ir_file).stem
-        functions = [(fn_name, ir_text)]
-
-    for fn_name, fn_ir in functions:
+    # Parse the full module once to enumerate non-declaration functions.
+    # Passing the full IR (not a per-function split) to ir_to_graph_slice_pdg
+    # preserves all declare stubs and globals — cross-function calls that appear
+    # in the same source file are visible, and llvmlite won't reject them.
+    import llvmlite.binding as _llvm
+    try:
+        _mod = _llvm.parse_assembly(ir_text)
+    except Exception as exc:
         if args.debug:
-            try:
-                import llvmlite.binding as _llvm
-                _llvm.parse_assembly(fn_ir)
-                print(f"[{fn_name}] parse OK")
-            except Exception as exc:
-                print(f"[{fn_name}] parse FAILED: {exc}")
-                continue
-        g = ir_to_graph_slice_pdg(fn_ir)
+            print(f"Module parse FAILED: {exc}")
+        print(f"ERROR: could not parse {args.ir_file}: {exc}")
+        sys.exit(1)
+
+    functions = [(fn.name, fn.name)
+                 for fn in _mod.functions if not fn.is_declaration]
+
+    if not functions:
+        print(f"ERROR: no non-declaration functions found in {args.ir_file}")
+        sys.exit(1)
+
+    for fn_name, _ in functions:
+        if args.debug:
+            print(f"[{fn_name}] parse OK (full-module mode)")
+        g = ir_to_graph_slice_pdg(ir_text, fn_name=fn_name)
         if g is None:
             print(f"[{fn_name}] — could not extract graph (no basic blocks)\n")
             continue

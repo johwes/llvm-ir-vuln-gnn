@@ -283,7 +283,7 @@ def _extract_slice_pdg(x, edge_index, edge_type, mock_names,
 # Graph builder — 5-pass algorithm + PDG slice extraction
 # ---------------------------------------------------------------------------
 
-def ir_to_graph_slice_pdg(ir_text):
+def ir_to_graph_slice_pdg(ir_text, fn_name: str | None = None):
     """
     Build instruction-level graph then extract PDG backward slice.
 
@@ -291,6 +291,10 @@ def ir_to_graph_slice_pdg(ir_text):
     - Pass 1: instr_to_block tracks node_id → block ptr_id for instructions
     - Pass 2: block_preds and block_last_instr built alongside CFG edges
     - Calls _extract_slice_pdg() with control-dependence support
+
+    fn_name: if given, select that specific function from a multi-function
+             module. If None, picks the last non-declaration (single-function
+             mode, original behaviour).
 
     Returns None if parsing fails or result has < 2 nodes.
     Caller adds 'y' and 'idx'.
@@ -302,8 +306,13 @@ def ir_to_graph_slice_pdg(ir_text):
 
     target_fn = None
     for fn in mod.functions:
-        if not fn.is_declaration:
+        if fn.is_declaration:
+            continue
+        if fn_name is None:
+            target_fn = fn          # last non-declaration (original behaviour)
+        elif fn.name == fn_name:
             target_fn = fn
+            break
     if target_fn is None:
         return None
 
