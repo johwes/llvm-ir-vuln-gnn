@@ -28,6 +28,7 @@ UPLOADS = [
     ("model_slice_pdg.pt",        "model_slice_pdg.pt",        "PDG slice GNN §12 — recommended (56.48% Devign, 11/13 scarnet)"),
     ("model_slice_pdg_v2.pt",     "model_slice_pdg_v2.pt",     "PDG + taint flags §22 (9/13 scarnet)"),
     ("model_slice_pdg_v3.pt",     "model_slice_pdg_v3.pt",     "PDG sink-node readout §23 (55.40% Devign, 9/13 scarnet)"),
+    ("model_slice_pdg_v4.pt",     "model_slice_pdg_v4.pt",     "PDG + intrinsic-aware sinks §24 (TBD Devign, TBD scarnet)"),
     # Model card
     ("MODEL_CARD.md",             "README.md",                 "Model card"),
     # Inference + context enrichment
@@ -45,6 +46,7 @@ UPLOADS = [
     ("train_slice_pdg.py",        "train_slice_pdg.py",        "Training script §12 (PDG slice — recommended)"),
     ("train_slice_pdg_v2.py",     "train_slice_pdg_v2.py",     "Training script §22 (PDG + taint flags)"),
     ("train_slice_pdg_v3.py",     "train_slice_pdg_v3.py",     "Training script §23 (sink-node readout + residual/LN)"),
+    ("train_slice_pdg_v4.py",     "train_slice_pdg_v4.py",     "Training script §24 (intrinsic-aware sink retraining)"),
     # Preprocessing scripts
     ("preprocess.py",             "preprocess.py",             "IR graph extractor (block-level)"),
     ("preprocess_instr.py",       "preprocess_instr.py",       "IR graph extractor §7 (instruction-level baseline)"),
