@@ -2768,4 +2768,71 @@ The one path not closed: **augmenting the GNN input with source-level token feat
 
 The Devign accuracy number (57.84%) understates the model's value in SCAR's pipeline. On SCAR's actual targets — code compiled in full project context via Tekton's `build-bitcode` task — attrition is near zero and the feature distribution better matches real-world vulnerability patterns. The §9 scarnet validation confirmed this: 10/13 known-vulnerable functions ranked in the top 13 of 19 (77% precision/recall) without any fine-tuning on the target codebase.
 
+---
+
+## Dataset Limitations and What a Better Dataset Would Look Like
+
+The 22 experiments here converge on a clear conclusion: the ceiling is not the model, and it is not the IR representation alone. It is the training data. Both Devign and BigVul were the best available public datasets at the time of this work, and both have the same structural flaw. Understanding that flaw precisely — and what would fix it — matters for anyone building on this line of research.
+
+### What is wrong with Devign and BigVul
+
+**Devign** assigns labels at git-commit granularity. A function is labelled "vulnerable" if a CVE-linked commit touched it. This is a noisy proxy for three distinct reasons:
+
+- The commit may have fixed a typo, renamed a variable, or restructured control flow with no semantic change to the vulnerable path — the function changed, but was never actually vulnerable.
+- The function that *introduced* the vulnerability in a prior commit carries a "fixed" label if the fixing commit also happened to touch it.
+- The actual vulnerable instruction may be in a callee, a macro expansion, or a shared utility that the commit did not touch at all — the GNN is reading the wrong function.
+
+Estimated label noise in Devign is 10–20%. For a binary classifier on a 56.6% majority class, this alone explains the 57–58% ceiling. A model that has learned to perfectly predict the structural pattern of a buffer overflow cannot score above ~80% if 10–20% of its training labels are inverted.
+
+**BigVul** improves label precision by using CVE-level CWE classifications rather than commit diffs, but has the same function-level granularity problem and a substantially different vulnerability distribution from Devign. The §21 experiments confirmed that training on BigVul does not improve scarnet performance, and combining both datasets offers no gain over either alone — the distributions are not complementary.
+
+Both datasets also share a less obvious flaw: **the negative class is unverified**. Functions not touched by CVE-linked commits are labelled "safe", but there is no audit confirming this. Real codebases contain unfixed vulnerabilities; some fraction of Devign's "safe" training examples are almost certainly vulnerable. A GNN trained on this signal learns to predict commit-level audit history, not structural vulnerability.
+
+### Properties of a dataset that would break through the ceiling
+
+In order of impact on the model:
+
+**1. Instruction-level location labels.**
+Not "this function is vulnerable" but "this call/memory access at this IR instruction index is the unguarded sink." This is the single most important property. With node-level ground truth the graph-classification problem becomes a node-classification problem — the §23 sink-node readout is architecturally already correct for this, it just needs training signal at the right level. The pooling-dilution problem disappears when supervision is applied directly to the sink node.
+
+**2. Minimal-diff CVE/fix pairs.**
+Pairs where the fix is exactly one added `icmp`+`br` (a missing bounds check), one null check, one bounds validation before an array index. These give pure structural signal: the IR subgraph that the fix *adds* is the vulnerability pattern the model should learn. Functions fixed by large refactors, renames, or multi-file changes introduce confounders and should be filtered out. The pair-wise structure is also essential — comparing the same function before and after the fix removes all confounding variation in coding style, project idioms, and function size.
+
+**3. Confirmed negatives.**
+Functions explicitly audited and confirmed safe, not simply "not touched by a known CVE commit." This could come from formal verification discharge, or from fuzz testing that found no defect after extensive coverage. Even a small set of confirmed-safe functions with known structural similarity to true vulnerabilities would dramatically sharpen the model's decision boundary.
+
+**4. Cross-project diversity at scale.**
+Devign is 4 projects. A robust training set needs 100+ projects across OS kernels, networking stacks, cryptographic implementations, file parsers, multimedia codecs, and embedded firmware — each with distinct coding conventions and vulnerability patterns. Without this, any model risks learning "FFmpeg-shaped code looks vulnerable" rather than learning generalizable structural patterns.
+
+**5. Vulnerability class balance.**
+Structured sampling across CWE types (CWE-119/125/787 buffer errors, CWE-416 use-after-free, CWE-476 null dereference, CWE-362 race conditions, CWE-190/191 integer over/underflow) so that a model cannot reach 58% by specialising on buffer overflows alone.
+
+### SCAR at scale as a training data generator
+
+SCAR is, architecturally, a dataset generator. It already produces most of what the above list requires:
+
+- **Planted bugs have exact location** — we know precisely which function, which line, which instruction pattern is the vulnerability.
+- **IKOS-validated true positives** — the planted bug is reachable and produces a real static witness. It is not a hypothetical.
+- **LLM-generated fix pairs are structurally minimal by construction** — the LLM introduces one vulnerability pattern; the fix removes it. The diff is almost always a single structural change.
+- **Scalable** — the bottleneck is IKOS analysis time per function, not human labelling. At scale this is a pipeline throughput problem, not a labelling cost problem.
+- **Controllable class balance** — bug types are explicitly specified, so CWE distribution is a configuration parameter, not an accident of history.
+
+A SCAR-generated corpus at scale would provide instruction-level labels (the planted bug is at a known IR instruction), confirmed negatives (the same codebase pre-injection), and minimal-diff pairs (the injection diff IS the vulnerability pattern). These are exactly the three highest-impact properties identified above.
+
+The realistic concern with synthetic data is **distribution shift**: LLM-planted bugs may follow different structural patterns than vulnerabilities introduced organically by human developers over years of maintenance. A model trained purely on SCAR-generated bugs might learn to recognise "LLM-introduced buffer overflow" rather than "buffer overflow." The mitigation is to treat SCAR data as training data only and evaluate exclusively on confirmed real-CVE corpora — scarnet-style, with human-verified planted bugs in real-world code. Never evaluate a SCAR-trained model on SCAR-generated test data.
+
+The practical architecture for a next-generation dataset:
+
+| Layer | Source | Purpose |
+|---|---|---|
+| Training (large) | SCAR-generated pairs at scale | Node-level supervision, class balance, volume |
+| Training (small) | Real CVE minimal-diff pairs, hand-curated | Distribution anchoring |
+| Evaluation | scarnet-style confirmed real-world corpora | Honest OOD performance measurement |
+
+### What this would change for the GNN
+
+If instruction-level labels exist, the entire framing changes. The model no longer asks "is this function vulnerable?" — a question that requires compressing a 300-node graph into one bit. It asks "is this instruction an unguarded sink?" — a question the PDG backward-slice graph is specifically structured to answer, where the relevant local context (guard conditions, data origins) is already concentrated in the K-hop neighborhood of the sink node. The §23 sink-node readout, trained with node-level supervision, would produce a calibrated per-instruction risk score rather than a function-level label. That score is directly actionable: pass the high-scoring IR instruction and its backward slice to the LLM as a targeted prompt, rather than the entire function.
+
+The information-theoretic situation also improves. The IR representation discards identifier names, but it fully preserves the structural relationship between a dangerous call and its guard conditions. That relationship — present or absent — is exactly what node-level supervision would teach the model to recognise. The LLVM IR representation is not the bottleneck. The label resolution is.
+
 The GNN's role is not to replace the LLM scanner. It is a **zero-cost structural pre-filter** — one CPU forward pass per function, milliseconds per PR, no LLM tokens spent — that routes structurally suspicious functions to the heavier analysis and bypasses clearly safe code. The 57–58% Devign number is the cost of that filter; the benefit is avoiding LLM calls on the majority of functions that are unambiguously clean.
