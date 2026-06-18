@@ -192,11 +192,13 @@ def _extract_slice_pdg_v3(x, edge_index, edge_type, mock_names,
 
     # Sink type 1: dangerous call sites
     dangerous_mocks = {nid for nid, nm in mock_names.items() if _is_dangerous(nm)}
-    sink_ids = set()
+    sink_ids:    set[int]       = set()
+    sink_to_fn: dict[int, str] = {}   # old_node_id → dangerous function name
     for mid in dangerous_mocks:
         for consumer in fwd_dfg[mid]:
             if int(x[consumer, 0]) == 63:
                 sink_ids.add(consumer)
+                sink_to_fn[consumer] = mock_names[mid]
 
     # Sink type 2: GEP with non-constant index
     for i in range(E):
@@ -257,6 +259,11 @@ def _extract_slice_pdg_v3(x, edge_index, edge_type, mock_names,
     for old_id in sink_ids:
         if old_id in old_to_new:
             sink_mask[old_to_new[old_id]] = True
+
+    # Map sink function names to new node indices
+    sink_fn_names = {old_to_new[old_id]: fn
+                     for old_id, fn in sink_to_fn.items()
+                     if old_id in old_to_new}
 
     new_src, new_dst, new_et = [], [], []
     for i in range(E):

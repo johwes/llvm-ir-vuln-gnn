@@ -186,11 +186,13 @@ def _extract_slice_pdg(x, edge_index, edge_type, mock_names,
 
     # Sink type 1: dangerous call sites
     dangerous_mocks = {nid for nid, nm in mock_names.items() if _is_dangerous(nm)}
-    sink_ids = set()
+    sink_ids:    set[int]       = set()
+    sink_to_fn: dict[int, str] = {}   # old_node_id → dangerous function name
     for mid in dangerous_mocks:
         for consumer in fwd_dfg[mid]:
             if int(x[consumer, 0]) == 63:
                 sink_ids.add(consumer)
+                sink_to_fn[consumer] = mock_names[mid]
 
     # Sink type 2: GEP with non-constant index
     for i in range(E):
@@ -246,6 +248,11 @@ def _extract_slice_pdg(x, edge_index, edge_type, mock_names,
     for new_id, old_id in enumerate(slice_nodes, start=1):
         new_x[new_id, 0] = int(x[old_id, 0])
 
+    # Map sink function names to new node indices
+    sink_fn_names = {old_to_new[old_id]: fn
+                     for old_id, fn in sink_to_fn.items()
+                     if old_id in old_to_new}
+
     new_src, new_dst, new_et = [], [], []
     for i in range(E):
         et = int(edge_type[i])
@@ -268,6 +275,7 @@ def _extract_slice_pdg(x, edge_index, edge_type, mock_names,
                       if new_et  else np.zeros(0, dtype=np.int64))
 
     return {"x": new_x, "edge_index": new_edge_index, "edge_type": new_edge_type,
+            "sink_fn_names": sink_fn_names,
             "_sliced": True, "_n_sinks": len(sink_ids)}
 
 
@@ -438,7 +446,7 @@ def ir_to_graph_slice_pdg(ir_text):
                             instr_to_block, block_preds, block_last_instr)
     if g is None:
         g = {"x": x, "edge_index": edge_index, "edge_type": edge_type,
-             "_sliced": False, "_n_sinks": 0}
+             "sink_fn_names": {}, "_sliced": False, "_n_sinks": 0}
 
     return g
 
