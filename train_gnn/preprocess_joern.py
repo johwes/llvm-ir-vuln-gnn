@@ -135,7 +135,8 @@ _EDGE_MAP = {
 
 _QUOTED   = r'"(?:[^"\\]|\\.)*"'
 _BODY     = r'(?:[^\]"]*|' + _QUOTED + r')*'
-_NODE_RE  = re.compile(r'"(\d+)"\s*\[(' + _BODY + r')\]', re.DOTALL)
+# ^ anchor prevents matching the second node-ID on edge lines ("a" -> "b" [...])
+_NODE_RE  = re.compile(r'^\s*"(\d+)"\s*\[(' + _BODY + r')\]', re.MULTILINE | re.DOTALL)
 _EDGE_RE  = re.compile(r'"(\d+)"\s*->\s*"(\d+)"\s*\[(' + _BODY + r')\]', re.DOTALL)
 _ATTR_RE  = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"', re.DOTALL)
 
