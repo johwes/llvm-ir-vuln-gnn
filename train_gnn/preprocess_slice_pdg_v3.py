@@ -218,11 +218,12 @@ def _extract_slice_pdg_v3(x, edge_index, edge_type, mock_names,
                 sink_ids.add(consumer)
                 sink_to_fn[consumer] = _canonical_name(mock_names[mid])
 
-    # Sink type 2: GEP with non-constant index
+    # Sink type 2: GEP or VLA alloca with non-constant operand
+    # alloca(non-const) = variable-length array; same structural pattern as GEP
     for i in range(E):
         if int(edge_type[i]) == 1:
             s, d = int(edge_index[0, i]), int(edge_index[1, i])
-            if int(x[d, 0]) == 29 and int(x[s, 0]) not in _CONSTANT_IDS:
+            if int(x[d, 0]) in (29, 26) and int(x[s, 0]) not in _CONSTANT_IDS:
                 sink_ids.add(d)
 
     if not sink_ids:

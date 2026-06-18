@@ -48,6 +48,7 @@ ICMP_OPCODES = frozenset({
 # Keyed by the internal name used in _SINK_INFO / sink_fn_names.
 _DISPLAY_NAMES: dict[str, str] = {
     "getelementptr": "array/ptr-subscript",
+    "alloca":        "vla-stack-alloc",
 }
 
 # Dangerous sink descriptions: fn_name → (what it does, what to fuzz)
@@ -118,6 +119,8 @@ _SINK_INFO: dict[str, tuple[str, str]] = {
                  "user-controlled format string"),
     "getelementptr": ("pointer arithmetic with non-constant index — out-of-bounds if unchecked",
                       "index at, near, and beyond array bounds; negative index; index=SIZE_MAX"),
+    "alloca":        ("stack allocation with non-constant size (VLA) — stack overflow if unchecked",
+                      "size=0; size=SIZE_MAX; negative size (signed wrap); size from user input"),
 }
 
 
@@ -165,23 +168,26 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
                 sinks.append({"node": i, "type": "dangerous_call", "fn": fn})
             elif opc == 29: # getelementptr
                 sinks.append({"node": i, "type": "unguarded_gep", "fn": "getelementptr"})
+            elif opc == 26: # alloca with non-constant size (VLA)
+                sinks.append({"node": i, "type": "vla_alloca", "fn": "alloca"})
     else:
-        # Fallback: scan for call and GEP nodes when sink_mask absent
+        # Fallback: scan for call, GEP, and VLA alloca nodes when sink_mask absent
         for i in range(N):
             opc = opcodes[i]
             if opc == 63 and i in sink_fn_names:
                 sinks.append({"node": i, "type": "dangerous_call",
                                "fn": sink_fn_names[i]})
-            elif opc == 29:
-                # Only flag GEP if it has a non-constant DFG predecessor
+            elif opc in (29, 26):
+                # Only flag if it has a non-constant DFG predecessor
                 preds = []
                 for e in range(E):
                     if int(edge_type[e]) == 1 and int(edge_index[1, e]) == i:
                         preds.append(int(edge_index[0, e]))
                 const_ids = {IDX_CONST_INT, IDX_CONST_FP, IDX_UNDEF, IDX_CONTEXT}
                 if any(opcodes[p] not in const_ids for p in preds):
-                    sinks.append({"node": i, "type": "unguarded_gep",
-                                  "fn": "getelementptr"})
+                    fn = "getelementptr" if opc == 29 else "alloca"
+                    kind = "unguarded_gep" if opc == 29 else "vla_alloca"
+                    sinks.append({"node": i, "type": kind, "fn": fn})
 
     # ---- input channels ------------------------------------------------
     input_channels = []
@@ -195,6 +201,21 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
     # ---- guard check ---------------------------------------------------
     guard_count = sum(1 for opc in opcodes if opc in ICMP_OPCODES)
     has_guard   = guard_count > 0
+
+    # ---- integer truncation signal ------------------------------------
+    # trunc (opcode 48) narrows an integer type (e.g. i64->i32).
+    # When present in a slice that also has size-taking sinks, it is a
+    # precursor pattern for integer-truncation vulnerabilities.
+    _SIZE_SINKS = frozenset({
+        "memcpy", "memmove", "memset", "bcopy",
+        "malloc", "calloc", "realloc", "xmalloc", "xrealloc",
+        "read", "recv", "recvfrom", "pread",
+        "snprintf", "vsnprintf", "fgets", "alloca",
+    })
+    trunc_count = sum(1 for opc in opcodes if opc == 48)
+    has_trunc   = trunc_count > 0 and any(
+        s.get("fn") in _SIZE_SINKS for s in sinks
+    )
 
     # ---- deduplicate sinks by function name (preserve first-seen order) ----
     from collections import Counter, OrderedDict
@@ -268,6 +289,11 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
         f"Slice: {N} nodes, {n_sinks} sink(s) ({len(unique_sinks)} unique type(s))."
     )
 
+    if has_trunc:
+        hint_parts.append(
+            f"fuzz integer truncation: supply values > INT_MAX / > UINT32_MAX as size"
+        )
+
     harness_hint = " | ".join(hint_parts)
 
     return {
@@ -282,6 +308,8 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
         "has_guard":          has_guard,
         "guard_density":      guard_density,
         "guard_density_label":guard_density_label,
+        "trunc_count":        trunc_count,
+        "has_trunc":          has_trunc,
         "natural_language":   natural_language,
         "harness_hint":       harness_hint,
     }
@@ -340,6 +368,8 @@ def format_for_llm(summary: dict, score: float | None = None,
         label = summary.get("guard_density_label", "")
         guard = f"{gc} guard(s) / {n_sinks} sink(s) = {gd:.1f} sinks/guard ({label})"
     lines.append("Guard status    : " + guard)
+    if summary.get("has_trunc"):
+        lines.append(f"Trunc warning   : {summary['trunc_count']} integer narrowing(s) — check size args for truncation")
     lines.append("Harness target  : " + summary["harness_hint"])
     lines.append(f"Slice           : {summary['slice_size']} nodes, "
                  f"{summary['n_sinks']} sink(s)")
