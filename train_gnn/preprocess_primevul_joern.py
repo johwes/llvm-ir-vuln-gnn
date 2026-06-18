@@ -132,7 +132,7 @@ def process_split(items: list[dict], workers: int, label: str) -> list[dict]:
     if workers == 1:
         for i, item in enumerate(items, 1):
             _record(process_item(item), item)
-            if i % 500 == 0:
+            if i % 100 == 0:
                 print(f"    {i}/{total}  ok={ok_vuln+ok_benign}  "
                       f"fail_v={fail_vuln}  fail_b={fail_benign}")
     else:
@@ -141,7 +141,7 @@ def process_split(items: list[dict], workers: int, label: str) -> list[dict]:
             for i, fut in enumerate(as_completed(futs), 1):
                 item = futs[fut]
                 _record(fut.result(), item)
-                if i % 500 == 0:
+                if i % 100 == 0:
                     print(f"    {i}/{total}  ok={ok_vuln+ok_benign}  "
                           f"fail_v={fail_vuln}  fail_b={fail_benign}")
 
