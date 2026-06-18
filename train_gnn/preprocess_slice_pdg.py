@@ -150,7 +150,25 @@ def _is_dangerous(name: str) -> bool:
     for s in _SINK_SUFFIXES:
         if name.endswith(s) or name.endswith("_" + s):
             return True
+    # LLVM memory intrinsics: e.g. llvm.memcpy.p0i8.p0i8.i64 / llvm.memcpy.p0.p0.i64
+    for s in ("memcpy", "memmove", "memset", "bcopy"):
+        if name.startswith(f"llvm.{s}."):
+            return True
     return False
+
+
+def _canonical_name(name: str) -> str:
+    """Map IR callee name (including LLVM intrinsics) to canonical sink name."""
+    name = name.lstrip("@")
+    if name in DANGEROUS_SINKS:
+        return name
+    for s in ("memcpy", "memmove", "memset", "bcopy"):
+        if name.startswith(f"llvm.{s}."):
+            return s
+    for s in _SINK_SUFFIXES:
+        if name.endswith(s) or name.endswith("_" + s):
+            return s
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +210,7 @@ def _extract_slice_pdg(x, edge_index, edge_type, mock_names,
         for consumer in fwd_dfg[mid]:
             if int(x[consumer, 0]) == 63:
                 sink_ids.add(consumer)
-                sink_to_fn[consumer] = mock_names[mid]
+                sink_to_fn[consumer] = _canonical_name(mock_names[mid])
 
     # Sink type 2: GEP with non-constant index
     for i in range(E):
