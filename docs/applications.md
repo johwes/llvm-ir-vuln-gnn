@@ -118,8 +118,11 @@ The combination that does not exist anywhere today:
 2. **A GNN trained with node-level supervision** on that dataset: instead of "is this
    function vulnerable?" (graph classification), the model answers "is this instruction
    an unguarded sink?" (node classification). The PDG backward-slice architecture and
-   the §23 sink-node readout are already structured correctly for this objective — they
-   require instruction-level training labels to realise their potential.
+   the sink-node readout design explored in §23 are already structured correctly for
+   this objective — they require instruction-level training labels to realise their
+   potential. The PDG slice context summarizer (`slice_context.py`) is the
+   application-layer complement: once the GNN produces per-node scores, the summarizer
+   replaces its static heuristic with model-driven sink identification.
 
 3. **Integration into supply chain scanning pipelines** as a free first pass over
    compiled IR, producing a ranked list of high-suspicion functions and their specific

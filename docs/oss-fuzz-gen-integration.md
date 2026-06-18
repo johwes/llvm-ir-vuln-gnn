@@ -5,6 +5,14 @@ generation (specifically [oss-fuzz-gen](https://github.com/google/oss-fuzz-gen))
 what problem it solves for small sparse language models, and what the integration
 looks like in practice.
 
+**Note on scope.** This is an *application tool*, not a training experiment. The
+PDG slice summarizer (`slice_context.py`) extracts structured vulnerability context
+from any IR function and formats it for LLM prompt injection. It shares the
+`preprocess_slice_pdg_v3.py` preprocessor with the §23 GNN architecture experiment
+(sink-node readout + CD depth cap), but the two are distinct: §23 is a Devign
+classifier variant; the context enrichment is downstream tooling for harness
+generation that works regardless of which GNN checkpoint is used for scoring.
+
 ---
 
 ## The core problem: small models need pre-computed context
@@ -239,9 +247,11 @@ integration requires:
    suspicion score. With instruction-level labels from SCAR (planted bug IR + exact
    sink instruction location), the model could be retrained to produce per-node scores,
    identifying not just "this function is suspicious" but "this specific `memcpy` call
-   on line N is the unguarded sink." The `sink_node_readout` architecture in `§23` and
-   the `sink_mask` field in `preprocess_slice_pdg_v3.py` are structured for this
-   upgrade — they only require instruction-level training labels to realise it.
+   on line N is the unguarded sink." The sink-node readout architecture (§23 experiment)
+   and the `sink_mask` field in `preprocess_slice_pdg_v3.py` are already structured
+   for this upgrade — they only require instruction-level training labels to realise it.
+   The context enrichment tooling would also benefit directly: per-node scores would
+   replace the current static sink-identification heuristic in `slice_context.py`.
 
 ---
 

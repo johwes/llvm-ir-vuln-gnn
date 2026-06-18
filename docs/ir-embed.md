@@ -2793,7 +2793,7 @@ Both datasets also share a less obvious flaw: **the negative class is unverified
 In order of impact on the model:
 
 **1. Instruction-level location labels.**
-Not "this function is vulnerable" but "this call/memory access at this IR instruction index is the unguarded sink." This is the single most important property. With node-level ground truth the graph-classification problem becomes a node-classification problem — the §23 sink-node readout is architecturally already correct for this, it just needs training signal at the right level. The pooling-dilution problem disappears when supervision is applied directly to the sink node.
+Not "this function is vulnerable" but "this call/memory access at this IR instruction index is the unguarded sink." This is the single most important property. With node-level ground truth the graph-classification problem becomes a node-classification problem — the sink-node readout architecture explored in §23 is already correct for this, it just needs training signal at the right level. The pooling-dilution problem disappears when supervision is applied directly to the sink node.
 
 **2. Minimal-diff CVE/fix pairs.**
 Pairs where the fix is exactly one added `icmp`+`br` (a missing bounds check), one null check, one bounds validation before an array index. These give pure structural signal: the IR subgraph that the fix *adds* is the vulnerability pattern the model should learn. Functions fixed by large refactors, renames, or multi-file changes introduce confounders and should be filtered out. The pair-wise structure is also essential — comparing the same function before and after the fix removes all confounding variation in coding style, project idioms, and function size.
