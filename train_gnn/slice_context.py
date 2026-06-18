@@ -44,6 +44,12 @@ ICMP_OPCODES = frozenset({
     86, 87, 88, 89,  # ult, ule, ugt, uge
 })
 
+# Human-readable display names for IR opcodes that appear as sinks.
+# Keyed by the internal name used in _SINK_INFO / sink_fn_names.
+_DISPLAY_NAMES: dict[str, str] = {
+    "getelementptr": "array/ptr-subscript",
+}
+
 # Dangerous sink descriptions: fn_name → (what it does, what to fuzz)
 _SINK_INFO: dict[str, tuple[str, str]] = {
     "strcpy":   ("copies string to dest without bounds check",
@@ -206,17 +212,18 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
     hint_parts = []
 
     for s in unique_sinks:
-        fn    = s.get("fn") or "unknown"
-        count = sink_counts[fn]
-        info  = _SINK_INFO.get(fn)
-        suffix = f" ×{count}" if count > 1 else ""
+        fn      = s.get("fn") or "unknown"
+        display = _DISPLAY_NAMES.get(fn, fn)
+        count   = sink_counts[fn]
+        info    = _SINK_INFO.get(fn)
+        suffix  = f" ×{count}" if count > 1 else ""
         if info:
             what, probe = info
-            sink_strs.append(f"`{fn}`{suffix} ({what})")
+            sink_strs.append(f"`{display}`{suffix} ({what})")
             if f"fuzz {probe}" not in hint_parts:
                 hint_parts.append(f"fuzz {probe}")
         else:
-            sink_strs.append(f"`{fn}`{suffix} (dangerous operation)")
+            sink_strs.append(f"`{display}`{suffix} (dangerous operation)")
             if "fuzz all arguments" not in hint_parts:
                 hint_parts.append("fuzz all arguments")
 
@@ -286,11 +293,12 @@ def format_for_llm(summary: dict, score: float | None = None,
         if fn in seen:
             continue
         seen.add(fn)
-        info  = _SINK_INFO.get(fn)
-        short = info[0][:50] if info else "dangerous operation"
-        count = sink_counts.get(fn, 1)
-        tag   = f" ×{count}" if count > 1 else ""
-        sink_labels.append(f"{fn}{tag} — {short}")
+        display = _DISPLAY_NAMES.get(fn, fn)
+        info    = _SINK_INFO.get(fn)
+        short   = info[0][:50] if info else "dangerous operation"
+        count   = sink_counts.get(fn, 1)
+        tag     = f" ×{count}" if count > 1 else ""
+        sink_labels.append(f"{display}{tag} — {short}")
     lines.append("Sinks           : " + ("; ".join(sink_labels) if sink_labels
                                           else "none identified"))
 
