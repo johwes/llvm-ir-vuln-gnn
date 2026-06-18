@@ -26,7 +26,7 @@ import json
 import pickle
 import random
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -136,7 +136,7 @@ def process_split(items: list[dict], workers: int, label: str) -> list[dict]:
                 print(f"    {i}/{total}  ok={ok_vuln+ok_benign}  "
                       f"fail_v={fail_vuln}  fail_b={fail_benign}")
     else:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
             futs = {pool.submit(process_item, it): it for it in items}
             for i, fut in enumerate(as_completed(futs), 1):
                 item = futs[fut]
