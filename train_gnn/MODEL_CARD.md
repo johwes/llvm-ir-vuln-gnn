@@ -47,6 +47,7 @@ python scan_ir.py fn.ll --context        # include PDG slice vulnerability conte
 | `model_slice_pdg_v3.pt` | §23 | PDG sink-node readout + residual/LN | 55.40% |
 | `model_slice_pdg_v4.pt` | §24 | PDG + intrinsic-aware sinks (retrain) | 55.00% |
 | `model_slice_pdg_v5.pt` | §25 | PDG slice trained on PrimeVul | 55.56% |
+| `model_slice_pdg_v6.pt` | §26 | PDG slice trained on Joern PrimeVul (VOCAB_SIZE=16) | TBD |
 
 `model_bigvul_cls.pt` and `model_bigvul_combined.pt` (§21) are trained on BigVul only
 and have no Devign score. See scarnet table below.
@@ -144,6 +145,7 @@ Training: Adam lr=1e-3, StepLR decay (γ=0.5, step=10), 30 epochs, hidden=64.
 | §23 | Sink-node readout + CD cap + residual/LN | 55.40% | 9/13 |
 | §24 | PDG + intrinsic-aware sinks (retrain) | 55.00% | 10/13 |
 | §25 | PDG slice trained on PrimeVul | 55.56% | 9/13 |
+| §26 | PDG slice trained on Joern PrimeVul (~95% coverage) | TBD | TBD |
 
 †High cross-run variance (~54–59%) at the ~1,250-sample split scale.
 

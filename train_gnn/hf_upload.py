@@ -49,7 +49,9 @@ UPLOADS = [
     ("train_slice_pdg_v3.py",     "train_slice_pdg_v3.py",     "Training script §23 (sink-node readout + residual/LN)"),
     ("train_slice_pdg_v4.py",     "train_slice_pdg_v4.py",     "Training script §24 (intrinsic-aware sink retraining)"),
     ("train_slice_pdg_v5.py",     "train_slice_pdg_v5.py",     "Training script §25 (PrimeVul dataset)"),
+    ("train_slice_pdg_v6.py",     "train_slice_pdg_v6.py",     "Training script §26 (Joern PrimeVul, VOCAB_SIZE=16)"),
     ("preprocess_primevul.py",    "preprocess_primevul.py",    "PrimeVul dataset preprocessor §25"),
+    ("preprocess_primevul_joern.py","preprocess_primevul_joern.py","PrimeVul preprocessor §26 (Joern, ~95% coverage)"),
     # Preprocessing scripts
     ("preprocess.py",             "preprocess.py",             "IR graph extractor (block-level)"),
     ("preprocess_instr.py",       "preprocess_instr.py",       "IR graph extractor §7 (instruction-level baseline)"),
