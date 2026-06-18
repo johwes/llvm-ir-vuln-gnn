@@ -575,7 +575,8 @@ def _setup_scarnet_ir(keep_ir: Path | None, clang: str = "clang-20") -> tuple[Pa
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 allow_abbrev=False)
 
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--scarnet", action="store_true",

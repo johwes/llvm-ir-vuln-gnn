@@ -45,6 +45,7 @@ python scan_ir.py fn.ll --context        # include PDG slice vulnerability conte
 | **`model_slice_pdg.pt`** | **§12** | **PDG slice — recommended** | **56.48%** |
 | `model_slice_pdg_v2.pt` | §22 | PDG + taint flags | — |
 | `model_slice_pdg_v3.pt` | §23 | PDG sink-node readout + residual/LN | 55.40% |
+| `model_slice_pdg_v4.pt` | §24 | PDG + intrinsic-aware sinks (retrain) | 55.00% |
 
 `model_bigvul_cls.pt` and `model_bigvul_combined.pt` (§21) are trained on BigVul only
 and have no Devign score. See scarnet table below.
@@ -67,6 +68,7 @@ checkpoints at top-13-of-19:
 | **model_slice_pdg.pt** | **§12 PDG slice** | **56.48%** | **11/13** | **84.6%** | **84.6%** |
 | model_slice_pdg_v2.pt | §22 PDG + taint flags | — | 9/13 | 69.2% | 69.2% |
 | model_slice_pdg_v3.pt | §23 PDG sink-node readout | 55.40% | 9/13 | 69.2% | 69.2% |
+| model_slice_pdg_v4.pt | §24 PDG + intrinsic-aware sinks | 55.00% | 10/13 | 76.9% | 76.9% |
 | model_bigvul_cls.pt | §21 BigVul classifier | — | 9/13 | 69.2% | 69.2% |
 | model_bigvul_combined.pt | §21 BigVul+Devign combined | — | 9/13 | 69.2% | 69.2% |
 | ENSEMBLE (max) | all models | — | 9/13 | 69.2% | 69.2% |
