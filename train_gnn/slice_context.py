@@ -293,6 +293,7 @@ def _demo_cli():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("ir_file", help=".ll file to analyse")
     ap.add_argument("--json",  action="store_true", help="output raw JSON summary")
+    ap.add_argument("--debug", action="store_true", help="show parse errors instead of silencing them")
     args = ap.parse_args()
 
     HERE = Path(__file__).parent
@@ -327,6 +328,14 @@ def _demo_cli():
         functions = [(fn_name, ir_text)]
 
     for fn_name, fn_ir in functions:
+        if args.debug:
+            try:
+                import llvmlite.binding as _llvm
+                _llvm.parse_assembly(fn_ir)
+                print(f"[{fn_name}] parse OK")
+            except Exception as exc:
+                print(f"[{fn_name}] parse FAILED: {exc}")
+                continue
         g = ir_to_graph_slice_pdg(fn_ir)
         if g is None:
             print(f"[{fn_name}] — could not extract graph (no basic blocks)\n")
