@@ -391,18 +391,24 @@ def ir_to_graph_joern(func_text: str, fn_name: str = "") -> dict | None:
 
         src_file.write_text(func_text, encoding="utf-8", errors="replace")
 
-        r = subprocess.run(
-            [str(JOERN_PARSE), str(src_file), "--output", str(cpg_file)],
-            capture_output=True, timeout=60,
-        )
+        try:
+            r = subprocess.run(
+                [str(JOERN_PARSE), str(src_file), "--output", str(cpg_file)],
+                capture_output=True, timeout=90,
+            )
+        except subprocess.TimeoutExpired:
+            return None
         if r.returncode != 0 or not cpg_file.exists():
             return None
 
-        r = subprocess.run(
-            [str(JOERN_EXPORT), "--repr=all", "--format=dot",
-             "--out", str(dot_dir), str(cpg_file)],
-            capture_output=True, timeout=60,
-        )
+        try:
+            r = subprocess.run(
+                [str(JOERN_EXPORT), "--repr=all", "--format=dot",
+                 "--out", str(dot_dir), str(cpg_file)],
+                capture_output=True, timeout=90,
+            )
+        except subprocess.TimeoutExpired:
+            return None
         if r.returncode != 0:
             return None
 
