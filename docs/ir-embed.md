@@ -2942,6 +2942,48 @@ python eval_all_models.py --scarnet --answer-key ~/Downloads/SCAR/scarnet-answer
 
 ---
 
+## §29 — Juliet-only (no Devign fine-tune)
+
+**Checkpoint:** `model_juliet_pretrain.pt` (produced by Phase 1 of `train_slice_pdg_v7.py` or `train_slice_pdg_v8.py`)
+**No new training script** — checkpoint already exists after running §27 or §28 Phase 1.
+
+### Hypothesis
+
+Every Devign fine-tune phase contaminates the Juliet structural prior with commit-history fingerprinting. §27 (BCE) and §28 (RankNet) both achieve 11/13 on scarnet — the same as §12 trained on Devign alone. The Juliet prior may be the signal; the Devign fine-tune may be the noise.
+
+The `model_juliet_pretrain.pt` checkpoint:
+- Was trained on ~19,000 zero-noise Juliet pairs covering CWE-121/122/134/415/476
+- Achieved 99%+ validation accuracy by epoch 3
+- Has never seen FFmpeg or QEMU commit history
+- Has never seen scarnet functions
+
+If the structural prior transfers without fine-tuning:
+- Functions with unguarded sinks reaching dangerous operations → high score (true structural signal)
+- Structurally clean functions → low score (the right answer, not a side-effect of Devign distribution)
+- `handle_stats` correctly scores low (divide-by-zero, no dangerous sink — the model should abstain)
+- `session_new` / `dispatch` FPs may drop if they are structurally cleaner than §27/§28 suggest
+
+### Evaluation
+
+No training step required. Run directly:
+
+```bash
+python eval_all_models.py --scarnet --answer-key ~/Downloads/SCAR/scarnet-answer-key.txt
+```
+
+`model_juliet_pretrain.pt` is registered in the REGISTRY and evaluates alongside all other checkpoints.
+
+### Results
+
+*To be filled after scarnet eval.*
+
+**What to look for:**
+- If P@13 ≥ 11/13 with fewer FPs in the top 8: Devign fine-tune was the noise source. The Juliet-only model is the right deployment checkpoint for SCAR.
+- If P@13 < 11/13: the Devign fine-tune was genuinely useful for real-world distribution. The structural prior alone does not transfer — need the commit-history signal to adapt.
+- Score calibration: if all 19 functions score in a narrow band (as in §28), the model is not discriminating. If vuln functions cluster high and benign functions cluster low, the prior is working.
+
+---
+
 ## Current Conclusion
 
 28 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, BigVul-trained, taint-augmented, sink-node readout, intrinsic-aware, PrimeVul-trained, Juliet-pretrained (BCE and RankNet) GNNs on Devign, scarnet, and zero-shot transfer to zlib v1.2.11. Every approach converges at the same ceiling: **~55–58% Devign accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%. Switching datasets (BigVul §21, PrimeVul §25), changing architecture (sink-node readout §23), fixing preprocessing (intrinsic-aware sinks §24), and adding semantic annotations (taint flags §22) all fail to improve the scarnet real-world benchmark beyond §12's 11/13.

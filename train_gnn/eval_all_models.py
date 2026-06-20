@@ -362,6 +362,13 @@ REGISTRY = [
         "preprocess": _pp_slice_pdg_v8,
         "load_model": _load_pdg_v8,
     },
+    {
+        "checkpoint": "model_juliet_pretrain.pt",
+        "label":      "§29  Juliet-only (no Devign FT) — pure structural prior",
+        "devign":     "—",
+        "preprocess": _pp_slice_pdg_v7,
+        "load_model": _load_pdg_v7,
+    },
 ]
 
 

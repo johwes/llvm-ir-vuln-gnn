@@ -50,6 +50,7 @@ python scan_ir.py fn.ll --context        # include PDG slice vulnerability conte
 | `model_slice_pdg_v6.pt` | §26 | PDG slice trained on Joern PrimeVul (VOCAB_SIZE=16) — dropped, see note | — |
 | `model_slice_pdg_v7.pt` | §27 | PDG slice, Juliet pretrain + Devign BCE fine-tune; multi-feature x(N,3) | 56.12% |
 | `model_slice_pdg_v8.pt` | §28 | PDG slice, Juliet pretrain + Devign RankNet fine-tune; pairwise ranking loss | TBD |
+| `model_juliet_pretrain.pt` | §29 | Juliet-only — no Devign fine-tune; pure structural prior (no training on commit history) | — |
 
 `model_bigvul_cls.pt` and `model_bigvul_combined.pt` (§21) are trained on BigVul only
 and have no Devign score. See scarnet table below.
@@ -76,6 +77,7 @@ checkpoints at top-13-of-19:
 | model_slice_pdg_v5.pt | §25 PDG slice (PrimeVul training) | 55.56% | 9/13 | 69.2% | 69.2% |
 | model_slice_pdg_v7.pt | §27 Juliet pretrain + Devign BCE FT | 56.12% | **11/13** | **84.6%** | **84.6%** |
 | model_slice_pdg_v8.pt | §28 Juliet pretrain + Devign RankNet | TBD | TBD | TBD | TBD |
+| model_juliet_pretrain.pt | §29 Juliet-only, no Devign FT | — | TBD | TBD | TBD |
 | model_bigvul_cls.pt | §21 BigVul classifier | — | 9/13 | 69.2% | 69.2% |
 | model_bigvul_combined.pt | §21 BigVul+Devign combined | — | 9/13 | 69.2% | 69.2% |
 | ENSEMBLE (max) | all models | — | 9/13 | 69.2% | 69.2% |
@@ -152,6 +154,7 @@ Training: Adam lr=1e-3, StepLR decay (γ=0.5, step=10), 30 epochs, hidden=64.
 | §26 | Joern PrimeVul — dropped (IKOS pipeline conflict) | — | — |
 | §27 | Juliet pretrain (99%+) → Devign BCE FT; multi-feature x(N,3) | 56.12% | **11/13** |
 | §28 | Juliet pretrain → Devign RankNet FT; pairwise ranking loss | TBD | TBD |
+| §29 | Juliet-only, no Devign FT — pure structural prior | — | TBD |
 
 †High cross-run variance (~54–59%) at the ~1,250-sample split scale.
 
