@@ -17,3 +17,6 @@ train_gnn/data/*.jsonl
 train_gnn/data/*.json
 train_gnn/data/*.csv
 train_gnn/data/*.zip
+train_gnn/data/clean_src/
+train_gnn/data/juliet_src/
+train_gnn/data/juliet_support/

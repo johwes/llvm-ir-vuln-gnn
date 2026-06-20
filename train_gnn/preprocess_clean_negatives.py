@@ -63,7 +63,7 @@ SOURCES = {
     },
     "musl": {
         "type": "git",
-        "url":  "https://github.com/bminor/musl.git",
+        "url":  "https://git.musl-libc.org/git/musl",
         "dir":  SRC / "musl",
         "glob": "src/**/*.c",
     },
