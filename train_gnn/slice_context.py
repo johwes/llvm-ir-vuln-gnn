@@ -501,6 +501,8 @@ def _demo_cli():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("ir_file", help=".ll file to analyse")
+    ap.add_argument("--function", type=str, default=None,
+                    help="Only analyse this function name (default: all functions in file)")
     ap.add_argument("--json",  action="store_true", help="output raw JSON summary")
     ap.add_argument("--debug", action="store_true", help="show parse errors instead of silencing them")
     args = ap.parse_args()
@@ -512,10 +514,6 @@ def _demo_cli():
     import re
     ir_text = Path(args.ir_file).read_text(errors="replace")
 
-    # Parse the full module once to enumerate non-declaration functions.
-    # Passing the full IR (not a per-function split) to ir_to_graph_slice_pdg
-    # preserves all declare stubs and globals — cross-function calls that appear
-    # in the same source file are visible, and llvmlite won't reject them.
     import llvmlite.binding as _llvm
     try:
         _mod = _llvm.parse_assembly(ir_text)
@@ -525,14 +523,22 @@ def _demo_cli():
         print(f"ERROR: could not parse {args.ir_file}: {exc}")
         sys.exit(1)
 
-    functions = [(fn.name, fn.name)
-                 for fn in _mod.functions if not fn.is_declaration]
+    all_functions = [fn.name for fn in _mod.functions if not fn.is_declaration]
 
-    if not functions:
+    if not all_functions:
         print(f"ERROR: no non-declaration functions found in {args.ir_file}")
         sys.exit(1)
 
-    for fn_name, _ in functions:
+    if args.function:
+        if args.function not in all_functions:
+            print(f"ERROR: function '{args.function}' not found in {args.ir_file}")
+            print(f"Available: {', '.join(all_functions)}")
+            sys.exit(1)
+        functions = [args.function]
+    else:
+        functions = all_functions
+
+    for fn_name in functions:
         if args.debug:
             print(f"[{fn_name}] parse OK (full-module mode)")
         g = ir_to_graph_slice_pdg(ir_text, fn_name=fn_name)
