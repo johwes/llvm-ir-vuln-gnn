@@ -74,6 +74,8 @@ from preprocess_slice        import ir_to_graph_slice        as _pp_slice
 from preprocess_slice_pdg    import ir_to_graph_slice_pdg    as _pp_slice_pdg
 from preprocess_slice_pdg_v2 import ir_to_graph_slice_pdg_v2 as _pp_slice_pdg_v2
 from preprocess_slice_pdg_v3 import ir_to_graph_slice_pdg_v3 as _pp_slice_pdg_v3
+# §27 uses the same PDG slice graph as §12 — model input is zero-padded to (N,3)
+_pp_slice_pdg_v7 = _pp_slice_pdg
 
 # ---------------------------------------------------------------------------
 # Import model modules under unambiguous aliases
@@ -90,6 +92,7 @@ import train_slice         as _m_slice
 import train_slice_pdg     as _m_pdg
 import train_slice_pdg_v2  as _m_pdg_v2
 import train_slice_pdg_v3  as _m_pdg_v3
+import train_slice_pdg_v7  as _m_pdg_v7
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +201,17 @@ def _load_pdg_v3(path: Path) -> nn.Module:
     embed_dim  = ckpt["embed.weight"].shape[1]
     hidden     = ckpt["lin.weight"].shape[1]
     m = _m_pdg_v3.SlicePDGGNNv3(vocab_size, embed_dim, hidden)
+    m.load_state_dict(ckpt)
+    return m.eval()
+
+
+def _load_pdg_v7(path: Path) -> nn.Module:
+    ckpt = torch.load(path, map_location="cpu", weights_only=True)
+    vocab_size = ckpt["embed.weight"].shape[0]
+    embed_dim  = ckpt["embed.weight"].shape[1]
+    hidden     = ckpt["lin.weight"].shape[1]
+    n_scalar   = ckpt["scalar_proj.weight"].shape[1] if "scalar_proj.weight" in ckpt else 2
+    m = _m_pdg_v7.SlicePDGGNN_v7(vocab_size, embed_dim, hidden, n_scalar)
     m.load_state_dict(ckpt)
     return m.eval()
 
@@ -317,6 +331,13 @@ REGISTRY = [
         "devign":     "—",
         "preprocess": _pp_instr_v2,
         "load_model": _load_instr_auto,
+    },
+    {
+        "checkpoint": "model_slice_pdg_v7.pt",
+        "label":      "§27  PDG slice, Juliet pretrain + Devign FT",
+        "devign":     "56.12%",
+        "preprocess": _pp_slice_pdg_v7,
+        "load_model": _load_pdg_v7,
     },
 ]
 
