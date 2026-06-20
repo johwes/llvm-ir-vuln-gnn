@@ -21,7 +21,7 @@ vulnerability triage pipelines.
 
 ## Recommended model
 
-**`model_slice_pdg.pt`** (§12 PDG slice GNN) — best real-world recall across all 25
+**`model_slice_pdg.pt`** (§12 PDG slice GNN) — best real-world recall across all 27
 experiments. Ranks 11 of 13 known-vulnerable scarnet functions in the top 13 of 19
 (84.6% recall@13). Devign test accuracy: 56.48%.
 
@@ -48,6 +48,7 @@ python scan_ir.py fn.ll --context        # include PDG slice vulnerability conte
 | `model_slice_pdg_v4.pt` | §24 | PDG + intrinsic-aware sinks (retrain) | 55.00% |
 | `model_slice_pdg_v5.pt` | §25 | PDG slice trained on PrimeVul | 55.56% |
 | `model_slice_pdg_v6.pt` | §26 | PDG slice trained on Joern PrimeVul (VOCAB_SIZE=16) — dropped, see note | — |
+| `model_slice_pdg_v7.pt` | §27 | PDG slice, Juliet pretrain + Devign fine-tune; multi-feature x(N,3) | 56.12% |
 
 `model_bigvul_cls.pt` and `model_bigvul_combined.pt` (§21) are trained on BigVul only
 and have no Devign score. See scarnet table below.
@@ -72,6 +73,7 @@ checkpoints at top-13-of-19:
 | model_slice_pdg_v3.pt | §23 PDG sink-node readout | 55.40% | 9/13 | 69.2% | 69.2% |
 | model_slice_pdg_v4.pt | §24 PDG + intrinsic-aware sinks | 55.00% | 10/13 | 76.9% | 76.9% |
 | model_slice_pdg_v5.pt | §25 PDG slice (PrimeVul training) | 55.56% | 9/13 | 69.2% | 69.2% |
+| model_slice_pdg_v7.pt | §27 Juliet pretrain + Devign FT | 56.12% | **11/13** | **84.6%** | **84.6%** |
 | model_bigvul_cls.pt | §21 BigVul classifier | — | 9/13 | 69.2% | 69.2% |
 | model_bigvul_combined.pt | §21 BigVul+Devign combined | — | 9/13 | 69.2% | 69.2% |
 | ENSEMBLE (max) | all models | — | 9/13 | 69.2% | 69.2% |
@@ -146,6 +148,7 @@ Training: Adam lr=1e-3, StepLR decay (γ=0.5, step=10), 30 epochs, hidden=64.
 | §24 | PDG + intrinsic-aware sinks (retrain) | 55.00% | 10/13 |
 | §25 | PDG slice trained on PrimeVul | 55.56% | 9/13 |
 | §26 | Joern PrimeVul — dropped (IKOS pipeline conflict) | — | — |
+| §27 | Juliet pretrain (99%+) → Devign FT; multi-feature x(N,3) | 56.12% | **11/13** |
 
 †High cross-run variance (~54–59%) at the ~1,250-sample split scale.
 
@@ -201,9 +204,9 @@ decisions.
   literals, and type tokens are discarded. Semantic bugs (wrong comparison operator,
   wrong format string, off-by-one in a constant) produce identical IR topology to
   correct code and are undetectable.
-- **GNN ceiling ~55–58% on Devign:** 25 experiments across block-level, instruction-level,
+- **GNN ceiling ~55–58% on Devign:** 27 experiments across block-level, instruction-level,
   slice variants, Perfograph encoding, VSDG edges, taint propagation, sink-node readout,
-  intrinsic-aware sinks, and PrimeVul training all converge in this range. The ceiling is
+  intrinsic-aware sinks, PrimeVul training, and Juliet pretraining all converge in this range. The ceiling is
   Devign's commit-level label noise (~10–20%), not the architecture or dataset quality.
   CodeBERT on source text reaches 63.43% partly because it reads identifier names.
   See `docs/ir-embed.md` for the full analysis.
@@ -225,12 +228,14 @@ decisions.
 Key files:
 - `train_gnn/train_slice_pdg.py` — §12 training (recommended)
 - `train_gnn/train_slice_pdg_v5.py` — §25 PrimeVul training
+- `train_gnn/train_slice_pdg_v7.py` — §27 Juliet pretrain → Devign fine-tune
+- `train_gnn/preprocess_juliet.py` — Juliet Test Suite preprocessor (§27)
 - `train_gnn/preprocess_primevul.py` — PrimeVul dataset preprocessor
 - `train_gnn/preprocess_slice_pdg.py` — PDG slice extractor
 - `train_gnn/preprocess_slice_pdg_v3.py` — v3 extractor (sink_mask + CD cap)
 - `train_gnn/scan_ir.py` — inference CLI (`--context` flag for LLM context)
 - `train_gnn/slice_context.py` — PDG slice → LLM prompt context
-- `docs/ir-embed.md` — full experiment log §1–§25 (§26 Joern dropped)
+- `docs/ir-embed.md` — full experiment log §1–§27 (§26 Joern dropped)
 - `docs/applications.md` — market gap analysis
 - `docs/oss-fuzz-gen-integration.md` — oss-fuzz-gen integration guide
 
