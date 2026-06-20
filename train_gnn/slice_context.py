@@ -421,7 +421,8 @@ def format_for_llm(summary: dict, score: float | None = None,
         ==================================
     """
     sep = "=" * width
-    lines = [sep, "GNN Vulnerability Context"]
+    fn  = summary.get("fn_name", "unknown")
+    lines = [sep, f"Function: {fn}  |  GNN Vulnerability Context"]
 
     if score is not None:
         flag = "SUSPICIOUS" if score >= 0.5 else "low suspicion"
