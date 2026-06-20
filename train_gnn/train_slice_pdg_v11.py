@@ -74,12 +74,12 @@ def main() -> None:
     ap.add_argument("--pretrain-ckpt",   type=str,
                     default="model_juliet_pretrain.pt",
                     help="Phase 1 checkpoint — shared with §27/§28/§29/§30/§31")
-    ap.add_argument("--devign-train",    type=str,
-                    default="data/train_graphs.pkl")
-    ap.add_argument("--devign-valid",    type=str,
-                    default="data/valid_graphs.pkl")
-    ap.add_argument("--devign-test",     type=str,
-                    default="data/test_graphs.pkl")
+    ap.add_argument("--devign-train",    type=str, default=None,
+                    help="Devign train pkl (default: auto-resolve PDG slice graphs)")
+    ap.add_argument("--devign-valid",    type=str, default=None,
+                    help="Devign valid pkl (default: auto-resolve PDG slice graphs)")
+    ap.add_argument("--devign-test",     type=str, default=None,
+                    help="Devign test pkl (default: auto-resolve PDG slice graphs)")
     ap.add_argument("--checkpoint",      type=str,
                     default="model_slice_pdg_v11.pt",
                     help="Final §32 checkpoint")
@@ -97,9 +97,22 @@ def main() -> None:
 
     juliet_train = DATA / "train_juliet_graphs.pkl"
     juliet_valid = DATA / "valid_juliet_graphs.pkl"
-    devign_train = Path(args.devign_train)
-    devign_valid = Path(args.devign_valid)
-    devign_test  = Path(args.devign_test)
+
+    def _devign_path(split, override):
+        """Prefer PDG-slice graphs (x shape N×3) over block-level graphs (N×44)."""
+        if override:
+            return Path(override)
+        for candidate in [
+            DATA / f"{split}_slice_pdg_v7_graphs.pkl",
+            DATA / f"{split}_slice_pdg_graphs.pkl",
+        ]:
+            if candidate.exists():
+                return candidate
+        return DATA / f"{split}_slice_pdg_graphs.pkl"
+
+    devign_train = _devign_path("train", args.devign_train)
+    devign_valid = _devign_path("valid", args.devign_valid)
+    devign_test  = _devign_path("test",  args.devign_test)
     pretrain_ckpt = Path(args.pretrain_ckpt)
     final_ckpt    = Path(args.checkpoint)
 
