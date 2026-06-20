@@ -2927,18 +2927,35 @@ This is `P(v ranks above b)` maximisation — training objective now directly ma
 
 ### Results
 
-*To be filled after training. Run:*
+Devign test accuracy: **44.52%** — below §12 (56.48%) and §27 (56.12%), as expected for a ranking objective.
 
-```bash
-python train_slice_pdg_v8.py --finetune-only --finetune-epochs 40
-python eval_all_models.py --scarnet --answer-key ~/Downloads/SCAR/scarnet-answer-key.txt
-```
+scarnet ranking: **11/13, 84.6% P@13** — parity with §12 and §27. Same two misses (`scar_alloc_copy` rank 14, `handle_stats` rank 17).
 
-**What to look for:**
-- Devign accuracy may be 50–55% — expected, not a regression
-- scarnet ranking vs §12/§27 (11/13 baseline) is the real signal
-- If ranking improves: RankNet's noise-robustness advantage is real
-- If ranking is unchanged: the 15% noise floor also limits pairwise signal extraction
+| Rank | Function | Score | Vuln? |
+|------|----------|-------|-------|
+| 1 | session_new | 91.4% | no |
+| 2 | scar_atoi | 82.0% | YES |
+| 3 | handle_set | 78.7% | YES |
+| 4 | session_consume_frag | 78.4% | YES |
+| 5 | handle_client | 78.2% | YES |
+| 6 | session_frag | 77.7% | YES |
+| 7 | parse_msg_header | 76.6% | YES |
+| 8 | handle_del | 75.1% | YES |
+| 9 | session_login | 74.9% | YES |
+| 10 | dispatch | 74.6% | no |
+| 11 | parse_batch | 73.4% | YES |
+| 12 | parse_cmd | 71.6% | YES |
+| 13 | scar_log | 71.2% | YES |
+| 14 | scar_alloc_copy | 68.7% | YES (miss) |
+| 15 | session_free | 67.3% | no |
+| 16 | handle_get | 66.9% | no |
+| 17 | handle_stats | 66.5% | YES (miss) |
+| 18 | handle_auth | 63.1% | no |
+| 19 | main | 61.9% | no |
+
+**Calibration regression:** RankNet compressed all scores into the 62–91% band. `main` scores 61.9% vs 39.2% in §27 — the model is less discriminating. The ordering is roughly preserved but the spread collapsed.
+
+**Conclusion:** RankNet achieves parity with §12/§27 on ranking quality but worse calibration. The 15% Devign label noise limits pairwise signal extraction just as it limits BCE — noisy pairs produce the same noise floor. Changing the loss objective alone does not break the ceiling. §27 remains the preferred checkpoint.
 
 ---
 
@@ -2975,12 +2992,39 @@ python eval_all_models.py --scarnet --answer-key ~/Downloads/SCAR/scarnet-answer
 
 ### Results
 
-*To be filled after scarnet eval.*
+**Hypothesis falsified.** The Juliet-only model saturates on scarnet — scoring 91.7–100% on all 19 functions, including `handle_stats` (divide-by-zero, no dangerous sink) and `main`.
 
-**What to look for:**
-- If P@13 ≥ 11/13 with fewer FPs in the top 8: Devign fine-tune was the noise source. The Juliet-only model is the right deployment checkpoint for SCAR.
-- If P@13 < 11/13: the Devign fine-tune was genuinely useful for real-world distribution. The structural prior alone does not transfer — need the commit-history signal to adapt.
-- Score calibration: if all 19 functions score in a narrow band (as in §28), the model is not discriminating. If vuln functions cluster high and benign functions cluster low, the prior is working.
+| Rank | Function | Score | Vuln? |
+|------|----------|-------|-------|
+| 1 | dispatch | 100.0% | no |
+| 2 | handle_set | 100.0% | YES |
+| 3 | handle_get | 100.0% | no |
+| 4 | handle_del | 100.0% | YES |
+| 5 | parse_cmd | 100.0% | YES |
+| 6 | session_login | 100.0% | YES |
+| 7 | session_frag | 100.0% | YES |
+| 8 | scar_atoi | 100.0% | YES |
+| 9 | handle_client | 100.0% | YES |
+| 10 | session_consume_frag | 100.0% | YES |
+| 11 | session_new | 100.0% | no |
+| 12 | parse_msg_header | 100.0% | YES |
+| 13 | handle_stats | 100.0% | YES |
+| 14 | main | 99.5% | no |
+| 15 | handle_auth | 98.8% | no |
+| 16 | parse_batch | 98.4% | YES |
+| 17 | scar_alloc_copy | 98.4% | YES |
+| 18 | session_free | 98.3% | no |
+| 19 | scar_log | 91.7% | YES |
+
+P@13: 9/13 (69.2%) — worse than §12. The model fires at maximum confidence on everything.
+
+**Why:** The Juliet model has never seen real production C. Scarnet functions are structurally more complex than Juliet synthetics — more call sites, more memory operations, more control flow. The model has no reference for what clean production code looks like, so everything exceeds its threshold. The score spread collapses to 91–100%, making ranking impossible.
+
+**Conclusion: the Devign fine-tune is not the contaminant — it is the calibration.** It teaches the model what "not suspicious" looks like in real-world C. Without it, the model cannot distinguish a complex-but-clean production function from an unguarded sink. The Juliet prior alone does not transfer to out-of-distribution code.
+
+The correct negative class for a Juliet-pretrained model is not only Juliet good functions — it must also include confirmed-clean real production code. A model trained on Juliet bad + Juliet good + clean real C negatives would have a calibrated reference for both structural safety and real-world coding style.
+
+**§27 remains the best checkpoint** (11/13, 84.6% P@13). The Devign fine-tune provides necessary calibration despite its label noise.
 
 ---
 

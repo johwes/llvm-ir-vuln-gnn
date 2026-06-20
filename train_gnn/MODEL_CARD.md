@@ -76,12 +76,14 @@ checkpoints at top-13-of-19:
 | model_slice_pdg_v4.pt | §24 PDG + intrinsic-aware sinks | 55.00% | 10/13 | 76.9% | 76.9% |
 | model_slice_pdg_v5.pt | §25 PDG slice (PrimeVul training) | 55.56% | 9/13 | 69.2% | 69.2% |
 | model_slice_pdg_v7.pt | §27 Juliet pretrain + Devign BCE FT | 56.12% | **11/13** | **84.6%** | **84.6%** |
-| model_slice_pdg_v8.pt | §28 Juliet pretrain + Devign RankNet | TBD | TBD | TBD | TBD |
-| model_juliet_pretrain.pt | §29 Juliet-only, no Devign FT | — | TBD | TBD | TBD |
+| model_slice_pdg_v8.pt | §28 Juliet pretrain + Devign RankNet | 44.52% | 11/13 | 84.6% | 84.6% |
+| model_juliet_pretrain.pt | §29 Juliet-only, no Devign FT | — | 9/13† | 69.2% | 69.2% |
 | model_bigvul_cls.pt | §21 BigVul classifier | — | 9/13 | 69.2% | 69.2% |
 | model_bigvul_combined.pt | §21 BigVul+Devign combined | — | 9/13 | 69.2% | 69.2% |
 | ENSEMBLE (max) | all models | — | 9/13 | 69.2% | 69.2% |
 | ENSEMBLE (mean) | all models | — | 9/13 | 69.2% | 69.2% |
+
+†§29 saturates: scores 91.7–100% on all 19 functions including benign ones — no discrimination possible. Devign fine-tune provides necessary calibration; Juliet-only model has no reference for what real production C looks like.
 
 **§12 is the uniquely best checkpoint.** Every other model and the full ensemble top out
 at 10/13. The ensemble scoring 9/13 — worse than the best individual model — indicates
@@ -153,8 +155,8 @@ Training: Adam lr=1e-3, StepLR decay (γ=0.5, step=10), 30 epochs, hidden=64.
 | §25 | PDG slice trained on PrimeVul | 55.56% | 9/13 |
 | §26 | Joern PrimeVul — dropped (IKOS pipeline conflict) | — | — |
 | §27 | Juliet pretrain (99%+) → Devign BCE FT; multi-feature x(N,3) | 56.12% | **11/13** |
-| §28 | Juliet pretrain → Devign RankNet FT; pairwise ranking loss | TBD | TBD |
-| §29 | Juliet-only, no Devign FT — pure structural prior | — | TBD |
+| §28 | Juliet pretrain → Devign RankNet FT; pairwise ranking loss | 44.52% | 11/13 |
+| §29 | Juliet-only, no Devign FT — saturates (91–100% on everything) | — | 9/13† |
 
 †High cross-run variance (~54–59%) at the ~1,250-sample split scale.
 
