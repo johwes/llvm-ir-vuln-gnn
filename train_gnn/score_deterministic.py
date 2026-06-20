@@ -175,24 +175,41 @@ def _load_answer_key(path: Path) -> set[str]:
             if l.strip() and not l.startswith("#")}
 
 
+_SCARNET_SRCS = [
+    "src/parse.c",
+    "src/handler.c",
+    "src/util.c",
+    "src/session.c",
+    "main.c",
+]
+
+
 def _setup_scarnet_ir(keep_ir: Path | None) -> tuple[Path, Path | None]:
     tmpdir    = Path(tempfile.mkdtemp(prefix="scarnet-det-"))
     clone_dir = tmpdir / "scarnet"
     print(f"Cloning {_SCARNET_REPO} ...")
-    subprocess.run(["git", "clone", "--depth=1", _SCARNET_REPO, str(clone_dir)],
-                   check=True, capture_output=True)
+    subprocess.run(["git", "clone", "--quiet", "--depth=1", _SCARNET_REPO, str(clone_dir)],
+                   check=True)
     ir_out = keep_ir if keep_ir else tmpdir / "ir"
     ir_out.mkdir(parents=True, exist_ok=True)
-    c_files = sorted(clone_dir.glob("**/*.c"))
-    print(f"Compiling {len(c_files)} C file(s) to LLVM IR ...")
-    for cf in c_files:
-        out_ll = ir_out / (cf.stem + ".ll")
+    print(f"Compiling {len(_SCARNET_SRCS)} C file(s) to LLVM IR ...")
+    compiled = 0
+    for rel in _SCARNET_SRCS:
+        cf     = clone_dir / rel
+        base   = rel.replace("/", "_").removesuffix(".c")
+        out_ll = ir_out / f"{base}.ll"
         result = subprocess.run(
             ["clang-20", "-O0", "-fno-inline", "-S", "-emit-llvm",
+             "-I", str(clone_dir / "include"),
              "-w", str(cf), "-o", str(out_ll)],
             capture_output=True)
-        if result.returncode != 0:
-            print(f"  WARN: {cf.name} failed to compile")
+        if result.returncode == 0:
+            compiled += 1
+        else:
+            print(f"  WARN: {rel} failed to compile")
+            if result.stderr:
+                print(f"    {result.stderr.decode(errors='replace').strip()[:200]}")
+    print(f"  {compiled}/{len(_SCARNET_SRCS)} compiled → {ir_out}")
     return ir_out, (None if keep_ir else tmpdir)
 
 
