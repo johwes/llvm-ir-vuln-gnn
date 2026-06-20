@@ -105,7 +105,7 @@ class SlicePDGGNN_v7(nn.Module):
         h = self.embed(opcode_ids)
 
         if self.scalar_proj is not None and x.shape[1] > 1:
-            scalars = x[:, 1:].float()
+            scalars = x[:, 1:1 + N_SCALAR].float()
             h = h + self.scalar_proj(scalars)
 
         h = F.relu(self.conv1(h, edge_index, edge_type))
