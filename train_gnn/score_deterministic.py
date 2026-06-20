@@ -140,8 +140,8 @@ def _gnn_score(model, fn_ir: str, fn_name: str) -> float | None:
 # IR utilities
 # ---------------------------------------------------------------------------
 
-def _collect_functions(ir_path: Path) -> list[tuple[str, str]]:
-    """Return (fn_name, full_module_ir) pairs from all .ll files under ir_path.
+def _collect_functions(ir_path: Path) -> list[tuple[str, str, Path]]:
+    """Return (fn_name, full_module_ir, source_file) triples from all .ll files.
 
     Passes the full module IR (not a per-function split) to the slicer so that
     all declare stubs and globals remain visible — exactly how slice_context.py
@@ -156,7 +156,7 @@ def _collect_functions(ir_path: Path) -> list[tuple[str, str]]:
             mod = llvm.parse_assembly(ir_text)
             for fn in mod.functions:
                 if not fn.is_declaration:
-                    out.append((fn.name, ir_text))
+                    out.append((fn.name, ir_text, f))
         except Exception:
             # Fallback: regex split (loses cross-function declares, but better than nothing)
             header_lines = []
@@ -171,7 +171,7 @@ def _collect_functions(ir_path: Path) -> list[tuple[str, str]]:
                     continue
                 m = re.match(r'define\s+.*?@([\w.]+)\s*\(', seg)
                 if m:
-                    out.append((m.group(1), header + "\n\n" + seg + "\n"))
+                    out.append((m.group(1), header + "\n\n" + seg + "\n", f))
     return out
 
 
@@ -308,15 +308,17 @@ def main() -> None:
     gnn_scores:  dict[str, float | None] = {}
     details:     dict[str, str]          = {}
     summaries:   dict[str, dict]         = {}
+    fn_files:    dict[str, Path]         = {}
     no_slice_rule = []
     no_slice_gnn  = []
 
-    for fn_name, fn_ir in functions:
+    for fn_name, fn_ir, fn_file in functions:
+        fn_files[fn_name] = fn_file
         # Rule score
         g = ir_to_graph_slice_pdg(fn_ir, fn_name=fn_name)
         if g is None or g.get("x") is None:
             rule_scores[fn_name] = 0.05
-            details[fn_name]     = "no slice"
+            details[fn_name]     = f"no slice ({fn_file.name})"
             no_slice_rule.append(fn_name)
         else:
             summary              = summarize_slice(g, fn_name=fn_name)
@@ -330,7 +332,7 @@ def main() -> None:
             sinks = ",".join(sorted({s.get("fn","?") for s in summary["sinks"]}))
             details[fn_name] = (
                 f"sinks={ns} guard={'yes('+gt+')' if hg else 'NO'} "
-                f"{ext}{trunc} [{sinks}]"
+                f"{ext}{trunc} [{sinks}] ({fn_file.name})"
             )
             if args.verbose:
                 print(f"  {fn_name}: {summary['natural_language']}")
@@ -341,6 +343,7 @@ def main() -> None:
             gnn_scores[fn_name] = gs
             if gs is None:
                 no_slice_gnn.append(fn_name)
+
 
     # --- --no-gep-only filter ---
     # Drop functions whose only sinks are GEP (array index) instructions.
