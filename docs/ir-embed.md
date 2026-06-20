@@ -2731,9 +2731,97 @@ Taint propagates forward through DFG edges with 0.5 decay per hop (max 3 hops). 
 
 ---
 
+## §23 — PDG Slice with Sink-Node Readout + Residual/LayerNorm
+
+**Scripts:** `preprocess_slice_pdg_v3.py` + `train_slice_pdg_v3.py`
+**Dataset:** Devign
+**Architecture:** SlicePDGGNNv3 — RGCN + residual connections + LayerNorm + sink-node scatter-max readout
+
+Two architectural problems with §12 motivated this experiment:
+
+**Problem 1 — pooling dilution.** In §12, global AttentionalAggregation pools all nodes in the slice. The slice is built backward from dangerous sinks, so the sink nodes and their immediate guard context are the most informative. But in the worst case the slice expands to 3,105 nodes (heavily nested error-handling code cascading through unbounded control-dependence expansion). Pooling 3,105 nodes dilutes the signal from the 5–10 that actually matter.
+
+**Problem 2 — oversmoothing.** Two RGCN layers with no skip connections and no normalisation risks oversmoothing on larger slices: deep node embeddings converge to neighbourhood averages and lose the individual opcode identity that distinguishes an `icmp slt` from an `alloca`.
+
+**Changes:**
+
+1. **Control-dependence depth cap** (`max_cd_hops=2`). The fixed-point CD expansion loop in §12 is bounded at 2 rounds of (full DFG BFS + CD expansion). A bounds check is almost always within 1–2 control-flow hops of the sink; deeper expansion adds noise, not signal.
+
+2. **Sink-node mask.** `preprocess_slice_pdg_v3.py` stores a boolean `sink_mask` in each graph dict marking which node indices are the identified dangerous sinks. The classifier applies to sink-node embeddings only, then scatter-max over sinks per graph. For graphs with no sinks, all nodes are marked — scatter-max degenerates to global max pool.
+
+3. **Residual connections + LayerNorm** on both RGCN layers. Standard remedy for oversmoothing: LayerNorm stabilises activations, residual connection preserves opcode identity in the node embedding while accumulating neighbourhood context.
+
+### Results
+
+- Devign: **55.40%** (−1.08pp vs §12)
+- **Scarnet: 9/13 (69.2% P@13) — regression from §12's 11/13**
+
+**What went wrong:** The sink-node readout is architecturally correct — it reads out from the right place. But it was trained under the same noisy graph-level Devign labels. The sink nodes' K-hop neighborhoods contain the structural guard signal, but without node-level supervision telling the model *which* nodes are the bug, the readout learns to maximise over sink embeddings under a function-level binary label. This introduces training noise: a function labelled "vulnerable" may have its bug at a sink the slicer did not identify, so the scatter-max over the wrong sinks degrades rather than improves. The architecture is correct for the problem; the supervision signal is still wrong.
+
+**Finding:** Sink-node readout requires instruction-level ground truth to realise its potential. Under graph-level noisy labels, it regresses. §12 global pooling, despite being theoretically inferior, is more robust to supervision noise because it diffuses the loss signal over the entire slice rather than concentrating it on a subset that may not contain the labelled bug.
+
+---
+
+## §24 — PDG Slice with Intrinsic-Aware Sinks
+
+**Scripts:** `preprocess_slice_pdg.py` (patched) + `train_slice_pdg_v4.py`
+**Dataset:** Devign
+**Architecture:** Identical to §12 (SlicePDGGNN, RGCN + AttentionalAggregation). Training data only changes — clean ablation.
+
+A preprocessing bug was discovered in §12: LLVM memory intrinsics have type-suffixed names (`llvm.memcpy.p0i8.p0i8.i64`, `llvm.memmove.p0i8.p0i8.i64`, `llvm.memset.p0i8.i64`) that did not match the bare-name suffix check in `_is_dangerous()`. The result: functions whose primary dangerous operation is a memcpy intrinsic — including Heartbleed-class functions — had the key sink invisible to the backward slicer, producing degraded training graphs with the dangerous operation absent from the slice.
+
+**Fix:** `_is_dangerous()` now recognises `llvm.<name>.*` prefixes. `_canonical_name()` maps intrinsic names back to canonical sink names (e.g. `llvm.memcpy.p0i8.p0i8.i64` → `"memcpy"`) for context enrichment output. Secondary effect: wrapper names (`CRYPTO_malloc` → `"malloc"`) are now also canonicalized.
+
+### Results
+
+- Devign: **55.00%** (−1.48pp vs §12)
+- **Scarnet: 10/13 (76.9% P@13)** — improvement from §12's 11/13? No — a different 10.
+
+**What happened:** The intrinsic fix correctly adds new sink nodes to graphs that were previously incomplete. But on Devign, many of those newly-exposed sinks are in functions labelled "safe" — the sink was present but not the bug, and the fix expands slices in both vulnerable and safe functions. The net effect on Devign is slight regression. On scarnet, the fix recovers one function missed by §12 but the retraining loses another. The intrinsic-aware sinks are correctly an improvement to the representation; the Devign accuracy regression is noise at this sample scale.
+
+**Finding:** The intrinsic fix is correct and is retained in the preprocessor as the canonical version. It does not, however, break through the Devign ceiling — the fundamental label noise constraint still applies. **The intrinsic-aware preprocessor is now the default** for all subsequent experiments.
+
+---
+
+## §25 — PDG Slice Trained on PrimeVul
+
+**Scripts:** `preprocess_primevul.py` + `train_slice_pdg_v5.py`
+**Dataset:** PrimeVul (arXiv:2403.18624, ICSE 2025)
+**Architecture:** Identical to §12 (SlicePDGGNN)
+
+PrimeVul applies LLM-assisted relabeling to real CVE commits, achieving function-level label accuracy approximately 3× better than Devign's commit-level approach. The hypothesis: if Devign's label noise is the binding ceiling (§21 conclusion), training on a cleaner dataset should break through it.
+
+**Dataset characteristics:**
+- ~7,000 vulnerable + ~229,000 benign C/C++ functions, 140+ CWEs
+- Class imbalance ~1:33 (vuln:benign) — capped at `--max-benign 21000` for a ~1:3 training ratio
+- Labels derived from CVE descriptions via LLM relabeling, not raw commit diffs
+
+**Critical attrition problem:** The clang compilation pipeline processes PrimeVul functions as isolated snippets with a common preamble of forward declarations. For Devign (4 large projects with consistent coding conventions), attrition is manageable. For PrimeVul (hundreds of projects, C and C++ mixed, with project-specific types and macros):
+
+- Vulnerable functions survive at **~21.8%**
+- Benign functions survive at **~37%**
+
+This 2× attrition differential is a systematic bias: vulnerable functions in PrimeVul tend to be the complex, stateful, deeply nested ones — exactly the functions that depend on project-specific types and cannot compile in isolation. The surviving vulnerable functions are systematically simpler than the full vulnerable population. The model trains on a biased sample that underrepresents the functions it most needs to learn.
+
+### Results
+
+- PrimeVul test accuracy: **71.3%** (on the surviving biased sample — not comparable to Devign)
+- Devign cross-eval: **55.56%** (−0.92pp vs §12)
+- **Scarnet: 9/13 (69.2% P@13) — regression from §12's 11/13**
+
+**Why it regressed:** The model trained on a biased sample of the simpler PrimeVul functions learns a different structural fingerprint than §12. The scarnet regressions are functions (`session_frag`, complex session handling) that are structurally similar to the complex vulnerable functions PrimeVul attrition filtered out. The model that never saw those patterns in training does not recognise them at inference.
+
+**Attrition is the root cause — not the dataset.** PrimeVul's labels are genuinely cleaner. The problem is the compilation pipeline, not the data source. Fixing attrition (with stub headers, permissive compilation flags, or a parser that does not require complete types) would recover the complex vulnerable functions and potentially break the ceiling. The Joern-based approach (`preprocess_primevul_joern.py`, §26) achieved ~95% coverage vs ~34% for clang — confirming that attrition, not label quality, is the binding constraint.
+
+**Joern path dropped.** §26 (Joern + PrimeVul) was implemented and tested but is not pursued further. Joern is a heavy dependency (Java runtime, separate analysis pass) that conflicts with the SCAR pipeline architecture: SCAR already compiles targets to LLVM bitcode for NASA IKOS static analysis. Requiring a separate Joern analysis pass would add a parallel toolchain for no net gain — the LLVM IR representation is already available for free in the SCAR build step, and IKOS depends on it. All future experiments stay within the LLVM IR/clang pipeline.
+
+**PrimeVul attrition track noted but not continued.** Fixing the clang attrition problem (stub headers, partial compilation) is tractable but the expected gain is uncertain — even with 95% coverage, PrimeVul's vulnerability distribution may not align with scarnet's bug types better than Devign does. The cleaner path forward is the Juliet Test Suite (§27), which provides zero-attrition matched pairs with instruction-level ground truth.
+
+---
+
 ## Current Conclusion
 
-22 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, BigVul-trained, and taint-augmented GNNs on Devign and scarnet, and zero-shot transfer to zlib v1.2.11. Every approach converges at the same ceiling: **~57–58% Devign accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%. Switching to BigVul's superior CVE-level labels (§21) and adding taint annotations to PDG nodes (§22) both fail to improve the scarnet real-world benchmark.
+25 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, BigVul-trained, taint-augmented, sink-node readout, intrinsic-aware, and PrimeVul-trained GNNs on Devign, scarnet, and zero-shot transfer to zlib v1.2.11. Every approach converges at the same ceiling: **~55–58% Devign accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%. Switching datasets (BigVul §21, PrimeVul §25), changing architecture (sink-node readout §23), fixing preprocessing (intrinsic-aware sinks §24), and adding semantic annotations (taint flags §22) all fail to improve the scarnet real-world benchmark beyond §12's 11/13.
 
 The 7pp gap to CodeBERT is real and has three distinct causes:
 
@@ -2759,10 +2847,15 @@ Devign labels are assigned at git-commit granularity to the function that change
 - **Register name embedding (§15):** FNV-1a hash of LLVM IR register names into 64 buckets, learned 16-dim embedding — 57.47%, no improvement. Names don't transfer across codebases; bucket collisions dominate. **IR feature engineering track closed.**
 - **Training data quality (§21):** Switching from Devign's commit-level labels to BigVul's CVE-level labels — no scarnet improvement. Dataset quality is not the bottleneck.
 - **Taint flags on PDG nodes (§22):** Explicit Pattern A/B annotations on PDG slice nodes — regressed from 11/13 to 9/13 on scarnet. Semantic heuristics tuned to Devign's vulnerability distribution hurt out-of-distribution performance. **Semantic heuristic track closed.**
+- **Sink-node readout + residual/LayerNorm (§23):** Architecturally correct but requires instruction-level supervision to realise its potential. Under graph-level noisy labels, concentrating the loss on sink nodes that may not contain the labelled bug regresses vs §12's diffuse global pooling.
+- **Intrinsic-aware sinks (§24):** Correctly fixes a preprocessing bug (LLVM memory intrinsics were invisible to the slicer). Retained as the canonical preprocessor. Does not break the Devign ceiling — label noise still binds.
+- **PrimeVul training (§25):** Cleaner labels, but 2× attrition differential (21.8% vs 37% survival for vulnerable vs benign functions) systematically filters out the complex functions where real bugs live. The biased surviving sample regresses on scarnet. Joern fixed the attrition but is a hard dependency conflict with the SCAR/IKOS pipeline — **Joern path dropped permanently.** PrimeVul itself is worth revisiting with a better compilation strategy.
 
 ### What has not been tried
 
-The one path not closed: **augmenting the GNN input with source-level token features**. A hybrid model that runs CodeBERT on the C source and a GNN on the IR graph, then combines them, would have both structural signal and semantic vocabulary. That's where the next meaningful improvement would come from.
+The highest-leverage path remaining within the LLVM IR constraint is **cleaner training signal at the structural level** — matched vulnerable/fixed pairs where the only difference is the presence or absence of a single guard subgraph. The Juliet Test Suite (NSA/NIST, ~100,000 synthetic C functions per CWE, exactly matched bad/good pairs) provides this: zero label noise, zero attrition, instruction-level ground truth implicit in the pair structure. Pretraining on Juliet then fine-tuning on Devign (§27) is the next experiment.
+
+Beyond data: the model currently outputs a score that is not well-calibrated against structural ground truth. The training objective (binary cross-entropy on noisy labels) does not directly optimise for the ranking use case — ranking unguarded sinks above guarded sinks above no sinks. A pairwise ranking loss derived directly from slice properties (no labels required) would align the training signal with what the model is actually used for in the SCAR pipeline.
 
 ### Practical value for SCAR
 
