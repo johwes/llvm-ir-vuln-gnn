@@ -140,34 +140,38 @@ def _gnn_score(model, fn_ir: str, fn_name: str) -> float | None:
 # IR utilities
 # ---------------------------------------------------------------------------
 
-def _split_functions(ir_text: str) -> list[tuple[str, str]]:
-    header_lines = []
-    for line in ir_text.splitlines():
-        if line.startswith("define"):
-            break
-        header_lines.append(line)
-    header = "\n".join(header_lines)
-
-    segs = re.split(r'(?=^define\b)', ir_text, flags=re.MULTILINE)
-    out  = []
-    for seg in segs:
-        seg = seg.strip()
-        if not seg.startswith("define"):
-            continue
-        m = re.match(r'define\s+.*?@([\w.]+)\s*\(', seg)
-        if not m:
-            continue
-        fn_name = m.group(1)
-        fn_ir   = header + "\n\n" + seg + "\n"
-        out.append((fn_name, fn_ir))
-    return out
-
-
 def _collect_functions(ir_path: Path) -> list[tuple[str, str]]:
+    """Return (fn_name, full_module_ir) pairs from all .ll files under ir_path.
+
+    Passes the full module IR (not a per-function split) to the slicer so that
+    all declare stubs and globals remain visible — exactly how slice_context.py
+    operates. Falls back to a regex split if llvmlite can't parse the file.
+    """
+    import llvmlite.binding as llvm
     files = [ir_path] if ir_path.is_file() else sorted(ir_path.glob("**/*.ll"))
     out   = []
     for f in files:
-        out.extend(_split_functions(f.read_text(errors="replace")))
+        ir_text = f.read_text(errors="replace")
+        try:
+            mod = llvm.parse_assembly(ir_text)
+            for fn in mod.functions:
+                if not fn.is_declaration:
+                    out.append((fn.name, ir_text))
+        except Exception:
+            # Fallback: regex split (loses cross-function declares, but better than nothing)
+            header_lines = []
+            for line in ir_text.splitlines():
+                if line.startswith("define"):
+                    break
+                header_lines.append(line)
+            header = "\n".join(header_lines)
+            for seg in re.split(r'(?=^define\b)', ir_text, flags=re.MULTILINE):
+                seg = seg.strip()
+                if not seg.startswith("define"):
+                    continue
+                m = re.match(r'define\s+.*?@([\w.]+)\s*\(', seg)
+                if m:
+                    out.append((m.group(1), header + "\n\n" + seg + "\n"))
     return out
 
 
