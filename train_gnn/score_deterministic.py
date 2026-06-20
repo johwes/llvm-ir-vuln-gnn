@@ -237,7 +237,7 @@ def _print_table(label: str, ranked: list[tuple[str, float]],
         if i == top_k + 1 and not boundary:
             print(f"  {'----':>4}  {'-'*44} {'------':>6}  (below top-{top_k})")
             boundary = True
-        vuln = "YES" if fn in answer_key else "no"
+        vuln = ("YES" if fn in answer_key else "no") if answer_key else ""
         det  = f"  {details[fn]}" if details and fn in details else ""
         print(f"  {i:>4}  {fn:<44} {score:>5.1%}  {vuln:<5}{det}")
 
@@ -257,7 +257,8 @@ def main() -> None:
     src.add_argument("--ir-dir",   type=str,
                      help="Directory of pre-compiled .ll files")
     ap.add_argument("--keep-ir",    type=str, default=None)
-    ap.add_argument("--answer-key", type=str, required=True)
+    ap.add_argument("--answer-key", type=str, default=None,
+                    help="Known-vulnerable function names, one per line (optional)")
     ap.add_argument("--top-k",      type=int, default=None)
     ap.add_argument("--gnn-checkpoint", type=str, default=None,
                     help="Optional SlicePDGGNN_v7 .pt file — enables MAX ensemble column")
@@ -276,10 +277,13 @@ def main() -> None:
         ir_path = Path(args.ir_dir)
 
     functions  = _collect_functions(ir_path)
-    answer_key = _load_answer_key(Path(args.answer_key))
-    top_k      = args.top_k or len(answer_key)
+    answer_key = _load_answer_key(Path(args.answer_key)) if args.answer_key else set()
+    top_k      = args.top_k or (len(answer_key) if answer_key else len(functions))
     print(f"Functions found: {len(functions)}")
-    print(f"Answer key: {len(answer_key)} known-vulnerable  (top-K = {top_k})")
+    if answer_key:
+        print(f"Answer key: {len(answer_key)} known-vulnerable  (top-K = {top_k})")
+    else:
+        print(f"No answer key — showing all {len(functions)} functions ranked")
 
     # --- load GNN if requested ---
     gnn_model = None
@@ -352,27 +356,29 @@ def main() -> None:
 
     # --- summary ---
     print(f"\n{'='*65}")
-    print(f"  {'Method':<30} {'Hits':>6}  {'P@K':>6}  {'R@K':>6}")
-    print(f"  {'-'*30} {'------':>6}  {'------':>6}  {'------':>6}")
-    h, p, r = _p_at_k(rule_ranked, answer_key, top_k)
-    print(f"  {'Philosophy 2 rule':<30} {len(h):>3}/{len(answer_key):<2}  {p:>6.1%}  {r:>6.1%}")
-    if gnn_ranked is not None:
-        h, p, r = _p_at_k(gnn_ranked, answer_key, top_k)
-        print(f"  {'GNN only ('+Path(args.gnn_checkpoint).stem+')':<30} {len(h):>3}/{len(answer_key):<2}  {p:>6.1%}  {r:>6.1%}")
-    if max_ranked is not None:
-        h, p, r = _p_at_k(max_ranked, answer_key, top_k)
-        print(f"  {'MAX(rule, GNN)':<30} {len(h):>3}/{len(answer_key):<2}  {p:>6.1%}  {r:>6.1%}")
-    print(f"{'='*65}")
-
-    print(f"\n  No-slice (rule): {', '.join(no_slice_rule) or 'none'}")
-    if gnn_model is not None:
-        print(f"  No-slice (GNN):  {', '.join(no_slice_gnn) or 'none'}")
-
-    rule_misses = sorted(answer_key - {fn for fn, _ in rule_ranked[:top_k]})
-    print(f"\n  Rule misses: {rule_misses}")
-    if max_ranked is not None:
-        max_misses = sorted(answer_key - {fn for fn, _ in max_ranked[:top_k]})
-        print(f"  MAX  misses: {max_misses}")
+    if answer_key:
+        print(f"  {'Method':<30} {'Hits':>6}  {'P@K':>6}  {'R@K':>6}")
+        print(f"  {'-'*30} {'------':>6}  {'------':>6}  {'------':>6}")
+        h, p, r = _p_at_k(rule_ranked, answer_key, top_k)
+        print(f"  {'Philosophy 2 rule':<30} {len(h):>3}/{len(answer_key):<2}  {p:>6.1%}  {r:>6.1%}")
+        if gnn_ranked is not None:
+            h, p, r = _p_at_k(gnn_ranked, answer_key, top_k)
+            print(f"  {'GNN only ('+Path(args.gnn_checkpoint).stem+')':<30} {len(h):>3}/{len(answer_key):<2}  {p:>6.1%}  {r:>6.1%}")
+        if max_ranked is not None:
+            h, p, r = _p_at_k(max_ranked, answer_key, top_k)
+            print(f"  {'MAX(rule, GNN)':<30} {len(h):>3}/{len(answer_key):<2}  {p:>6.1%}  {r:>6.1%}")
+        print(f"{'='*65}")
+        print(f"\n  No-slice (rule): {', '.join(no_slice_rule) or 'none'}")
+        if gnn_model is not None:
+            print(f"  No-slice (GNN):  {', '.join(no_slice_gnn) or 'none'}")
+        rule_misses = sorted(answer_key - {fn for fn, _ in rule_ranked[:top_k]})
+        print(f"\n  Rule misses: {rule_misses}")
+        if max_ranked is not None:
+            max_misses = sorted(answer_key - {fn for fn, _ in max_ranked[:top_k]})
+            print(f"  MAX  misses: {max_misses}")
+    else:
+        print(f"  No-slice: {', '.join(no_slice_rule) or 'none'}")
+        print(f"{'='*65}")
 
     if tmpdir and tmpdir.exists():
         shutil.rmtree(tmpdir, ignore_errors=True)
