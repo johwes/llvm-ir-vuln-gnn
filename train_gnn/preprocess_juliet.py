@@ -146,6 +146,10 @@ DANGEROUS_SINKS = frozenset({
     "read", "recv", "recvfrom", "pread",
     "malloc", "calloc", "realloc", "free", "xmalloc", "xrealloc",
     "printf", "fprintf", "syslog", "err", "warn",
+    # Integer conversion — unchecked return used as array index / size is a
+    # common vulnerability pattern (scar_atoi in scarnet, CWE-190/191).
+    "atoi", "atol", "atoll", "atof",
+    "strtol", "strtoul", "strtoll", "strtoull", "strtod",
 })
 
 INPUT_SOURCES = frozenset({

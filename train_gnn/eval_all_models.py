@@ -78,9 +78,11 @@ from preprocess_slice        import ir_to_graph_slice        as _pp_slice
 from preprocess_slice_pdg    import ir_to_graph_slice_pdg    as _pp_slice_pdg
 from preprocess_slice_pdg_v2 import ir_to_graph_slice_pdg_v2 as _pp_slice_pdg_v2
 from preprocess_slice_pdg_v3 import ir_to_graph_slice_pdg_v3 as _pp_slice_pdg_v3
-# §27/§28 use the same PDG slice graph as §12 — model input is zero-padded to (N,3)
-_pp_slice_pdg_v7 = _pp_slice_pdg
-_pp_slice_pdg_v8 = _pp_slice_pdg
+# §27+ use ir_to_graph_slice_pdg_v7 which returns x(N,3): opcode, guard_class,
+# is_external_input.  _pp_slice_pdg returns only (N,1) — using it for §27+
+# silently zeros out scalar_proj in the forward pass and drops both features.
+from preprocess_juliet       import ir_to_graph_slice_pdg_v7 as _pp_slice_pdg_v7
+_pp_slice_pdg_v8 = _pp_slice_pdg_v7
 
 # ---------------------------------------------------------------------------
 # Import model modules under unambiguous aliases
