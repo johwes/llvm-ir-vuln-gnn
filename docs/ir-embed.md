@@ -3069,13 +3069,56 @@ All three compile cleanly via `compile_to_ir()`. All labelled `y=0`.
 
 ### Results
 
-*To be filled after training.*
+**Corpus:** 3,793 clean C graphs extracted from 6 sources; 20,093 total training graphs after combining with Juliet:
 
-**What to look for:**
-- Score spread wider than §27 (currently 39–81%) — benign functions should drop below 40%, confirmed sinks above 65%
-- `session_new` and `dispatch` (§27 FPs at rank 1 and 8) should drop — they are structurally similar to musl/zlib clean functions
-- `scar_alloc_copy` (§27 miss at rank 14) may rise — it has real memory sinks, no guard, closer to Juliet bad pattern
-- `handle_stats` correctly low — still no dangerous sink, model should abstain Every approach converges at the same ceiling: **~55–58% Devign accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%. Switching datasets (BigVul §21, PrimeVul §25), changing architecture (sink-node readout §23), fixing preprocessing (intrinsic-aware sinks §24), and adding semantic annotations (taint flags §22) all fail to improve the scarnet real-world benchmark beyond §12's 11/13.
+| Source | Graphs |
+|---|---|
+| lua | 2,310 |
+| musl | 729 |
+| lz4 | 429 |
+| zlib | 159 |
+| cjson | 154 |
+| libuv | 12 |
+| **Total** | **3,793** |
+
+Training converged cleanly: 97.79% validation accuracy by epoch 3 — vs §27/§28's oscillating 50–55%. The clean BCE signal without Devign noise is apparent immediately.
+
+**scarnet P@13: 9/13 (69.2%) — regression from §12/§27's 11/13 (84.6%)**
+
+| Rank | Function | Score | Vuln? |
+|---|---|---|---|
+| 1 | handle_del | 99.3% | YES ✓ |
+| 2 | session_new | 95.0% | no ✗ (FP) |
+| 3 | session_login | 19.2% | YES ✓ |
+| 4 | scar_log | 6.4% | YES ✓ |
+| 5 | handle_set | 2.9% | YES ✓ |
+| 6 | handle_client | 2.5% | YES ✓ |
+| 7 | handle_get | 1.1% | no ✗ (FP) |
+| 8 | main | 0.6% | no ✗ (FP) |
+| 9 | parse_msg_header | 0.3% | YES ✓ |
+| 10 | parse_cmd | 0.3% | YES ✓ |
+| 11 | handle_auth | 0.1% | no ✗ (FP) |
+| 12 | handle_stats | 0.1% | YES ✓ |
+| 13 | scar_alloc_copy | 0.0% | YES ✓ |
+| *below top-13* | | | |
+| 14 | dispatch | 0.0% | no |
+| 15 | session_free | 0.0% | no |
+| 16 | session_frag | 0.0% | YES ✗ (miss) |
+| 17 | session_consume_frag | 0.0% | YES ✗ (miss) |
+| 18 | scar_atoi | 0.0% | YES ✗ (miss) |
+| 19 | parse_batch | 0.0% | YES ✗ (miss) |
+
+### Why §30 regressed
+
+The score distribution is bimodal: `handle_del` (99.3%) and `session_new` (95%), then everything below 20%. This is a domain-shift failure with a precise cause.
+
+**Root cause: Lua dominated the negative corpus.** 2,310 of 3,793 negatives (61%) came from Lua — an interpreter with a distinctive, highly-templated coding style unlike any server-side C. The model learned "library/interpreter C = clean," but scarnet's server functions — `session_frag`, `session_consume_frag`, `scar_atoi`, `parse_batch` — are also server-style C. The model pushed them to zero because they look structurally like the negative domain.
+
+The diagnostic is sharp: `handle_del` scores 99.3% (unguarded `memcpy`/`free` with no guard — a Juliet-style clear-sink pattern). `session_frag` and `session_consume_frag` also have real unguarded sinks, but are structured like server C — matching the musl/lua negative distribution rather than the Juliet positive distribution. Devign's 15% label noise is less damaging than this bias because Devign at least contains functions from the same structural domain as production server code.
+
+**§31 fixes this** by replacing lua with libcurl — domain-matched clean server/network C that teaches the correct boundary. See §31 below.
+
+Every approach converges at the same ceiling: **~55–58% Devign accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%. Switching datasets (BigVul §21, PrimeVul §25), changing architecture (sink-node readout §23), fixing preprocessing (intrinsic-aware sinks §24), and adding semantic annotations (taint flags §22) all fail to improve the scarnet real-world benchmark beyond §12's 11/13.
 
 The 7pp gap to CodeBERT is real and has three distinct causes:
 
@@ -3107,9 +3150,76 @@ Devign labels are assigned at git-commit granularity to the function that change
 
 ### What has not been tried
 
-The highest-leverage path remaining within the LLVM IR constraint is **cleaner training signal at the structural level** — matched vulnerable/fixed pairs where the only difference is the presence or absence of a single guard subgraph. The Juliet Test Suite (NSA/NIST, ~100,000 synthetic C functions per CWE, exactly matched bad/good pairs) provides this: zero label noise, zero attrition, instruction-level ground truth implicit in the pair structure. Pretraining on Juliet then fine-tuning on Devign (§27) is the next experiment.
+Within the no-Devign / clean-negatives approach: §30 proved the concept is correct (bimodal convergence, clean training signal) but the negative corpus is the wrong domain. **Domain-matched clean negatives** — server/network C that is structurally similar to scarnet but confirmed clean — is the correct next step. libcurl is the best candidate: network/protocol C, heavily audited, with socket handling, buffer management, HTTP parsing and session management that mirrors scarnet's structure.
 
-Beyond data: §28 replaces Phase 2's BCE with a pairwise RankNet loss — for each mini-batch, all (vuln, benign) pairs are formed and `P(score_v > score_b)` is maximised directly. This aligns the training objective with the scarnet ranking use case without requiring clean labels. Results pending.
+Beyond data: §28 replaces Phase 2's BCE with a pairwise RankNet loss — for each mini-batch, all (vuln, benign) pairs are formed and `P(score_v > score_b)` is maximised directly. This aligns the training objective with the scarnet ranking use case without requiring clean labels. §31 combines domain-matched negatives with this approach.
+
+## §31 — Domain-Matched Clean Negatives (libcurl replaces lua)
+
+**Scripts:** `preprocess_clean_negatives.py --sources zlib,musl,libcurl,lz4,cjson,libuv` + `train_slice_pdg_v10.py`
+**Architecture:** SlicePDGGNN_v7 — identical to §27–§30
+
+### Motivation
+
+§30 regression analysis identified the root cause precisely: lua (61% of negatives, 2,310/3,793 graphs) taught the model "interpreter/library C = clean," which caused server-style vulnerable functions (`session_frag`, `session_consume_frag`, `scar_atoi`, `parse_batch`) to score near 0%.
+
+The fix is **domain-matched negatives**: the negative corpus must contain server/network C that is structurally similar to scarnet but confirmed clean, so the model learns the correct boundary — "unguarded sink = vulnerable" rather than "server C = clean."
+
+**libcurl** is the optimal replacement:
+- Network/protocol handling C — HTTP parsing, socket handling, session management, buffer ops
+- Structurally closest to scarnet among all open-source C libraries
+- Heavily security-focused with active CVE response (any unguarded pattern has been audited away)
+- ~200–400 source functions, same ballpark as scarnet itself
+
+The remaining sources (zlib, musl, cjson, lz4, libuv) are retained for diversity.
+
+### Clean negative sources (§31)
+
+| Source | Structural domain | Reason to include |
+|---|---|---|
+| libcurl | Network/protocol C — socket, HTTP, TLS, session | Domain-matched to scarnet; heavily audited |
+| musl | String/stdlib/math libc | Diverse clean C idioms |
+| zlib | Compression — memory-heavy | Clean memory ops, well-studied |
+| lz4 | Compression | Fast-path buffer code |
+| cjson | JSON parser | Application-level parsing, similar to scarnet parse.c |
+| libuv | Async I/O — handles, sockets | Server-loop C |
+
+Lua is **dropped** — its interpreter-style C (templated opcode dispatch, VM state machines) is too unlike server code and biases the model toward suppressing server-style functions.
+
+### Training
+
+- Phase 1 (Juliet-only BCE): reuses `model_juliet_pretrain.pt` from §27/§28/§29/§30 if present
+- Phase 2: Juliet bad + (Juliet good + libcurl + musl + zlib + lz4 + cjson + libuv) combined negatives, BCE, 40 epochs, lr=3e-4
+- No Devign anywhere — evaluate with scarnet only
+- Output: `model_slice_pdg_v10.pt`
+
+### Commands
+
+```bash
+# Preprocessing — skip clone of already-present repos, add libcurl
+python preprocess_clean_negatives.py \
+    --sources zlib,musl,libcurl,lz4,cjson,libuv \
+    --workers 4
+
+# Training (skip Phase 1 if model_juliet_pretrain.pt already exists)
+python train_slice_pdg_v10.py --finetune-only
+
+# Evaluate
+python eval_all_models.py --scarnet \
+    --answer-key ~/Downloads/SCAR/scarnet-answer-key.txt \
+    --summary-only
+```
+
+**What to look for:**
+- `session_frag`, `session_consume_frag`, `scar_atoi`, `parse_batch` should recover from 0.0% to the 40–70% range — they are unguarded sinks, and libcurl's clean sinks look different from them
+- `session_new` should remain a FP or drop — it is genuinely structurally complex
+- `handle_del` should remain near 99% — the clear-sink pattern is unchanged
+
+### Results
+
+*To be filled after training.*
+
+---
 
 ### Practical value for SCAR
 

@@ -9,14 +9,20 @@ real C functions as negative training examples.
 
 Sources (auto-cloned / downloaded):
   zlib     github.com/madler/zlib          ~50 functions
-  musl     github.com/bminor/musl          ~2,000 functions
-  SQLite   sqlite.org amalgamation         ~1,500 functions
+  musl     github.com/bminor/musl          ~700 functions (portable subdirs only)
+  lua      github.com/lua/lua              ~2,300 functions (§30; dropped in §31)
+  libcurl  github.com/curl/curl            ~400 functions (§31; domain-matched to scarnet)
+  libuv    github.com/libuv/libuv          ~12 functions
+  cjson    github.com/DaveGamble/cJSON     ~150 functions
+  lz4      github.com/lz4/lz4             ~430 functions
 
-All three:
-  - Compile cleanly via our existing compile_to_ir() pipeline
-  - Are heavily audited / security-focused open source projects
-  - Cover diverse real C idioms (memory mgmt, string, I/O, math)
-  - Are labelled 0 (benign) — the model learns "real clean C != unguarded sink"
+§30 default (--sources zlib,musl,lua,libuv,cjson,lz4):
+  Includes lua — good diversity but lua dominated (61%) and caused domain shift in §30.
+
+§31 recommended (--sources zlib,musl,libcurl,lz4,cjson,libuv):
+  Replaces lua with libcurl — domain-matched server/network C, structurally closest
+  to scarnet. The model learns the correct boundary: "unguarded sink = vuln" vs
+  "server C with guards = clean".
 
 Output: data/train_clean_neg_graphs.pkl
         data/valid_clean_neg_graphs.pkl
@@ -67,10 +73,22 @@ SOURCES = {
     },
     "lua": {
         # ~30 self-contained .c files at repo root, pure C, minimal deps
+        # NOTE: Lua dominated the §30 negative corpus (61%) and caused domain shift —
+        # interpreter-style C pushed server-style vulnerable functions to ~0%.
+        # Include only if you want the §30 corpus; omit for §31+ via --sources.
         "type": "git",
         "url":  "https://github.com/lua/lua.git",
         "dir":  SRC / "lua",
         "glob": "*.c",
+    },
+    "libcurl": {
+        # HTTP/network C — socket handling, buffer mgmt, HTTP parsing, session mgmt.
+        # Structurally closest to scarnet among all available open-source C libraries.
+        # Used in §31 to replace lua as the primary negative source.
+        "type": "git",
+        "url":  "https://github.com/curl/curl.git",
+        "dir":  SRC / "libcurl",
+        "glob": "lib/*.c",
     },
     "libuv": {
         # Node.js async I/O library — sockets, buffers, handles; closest in
@@ -234,7 +252,9 @@ def main() -> None:
                     help="Skip git clone / download (sources already present)")
     ap.add_argument("--sources",     type=str,
                     default="zlib,musl,lua,libuv,cjson,lz4",
-                    help="Comma-separated sources to use")
+                    help="Comma-separated sources to use. "
+                         "§30: zlib,musl,lua,libuv,cjson,lz4 (default). "
+                         "§31: zlib,musl,libcurl,lz4,cjson,libuv (drops lua, adds libcurl).")
     args = ap.parse_args()
 
     import random

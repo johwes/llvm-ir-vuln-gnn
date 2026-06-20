@@ -43,6 +43,8 @@ Locally retrained models (not on HuggingFace — run the matching train script):
     model_bigvul_combined.pt python train_bigvul_cls.py --combine-devign
     model_slice_pdg_v7.pt    python train_slice_pdg_v7.py   (needs preprocess_juliet.py first)
     model_slice_pdg_v8.pt    python train_slice_pdg_v8.py   (needs preprocess_juliet.py first)
+    model_slice_pdg_v9.pt    python train_slice_pdg_v9.py   (needs preprocess_juliet.py + preprocess_clean_negatives.py first)
+    model_slice_pdg_v10.pt   python train_slice_pdg_v10.py  (needs preprocess_juliet.py + preprocess_clean_negatives.py --sources zlib,musl,libcurl,lz4,cjson,libuv)
 """
 
 import argparse
@@ -371,7 +373,14 @@ REGISTRY = [
     },
     {
         "checkpoint": "model_slice_pdg_v9.pt",
-        "label":      "§30  Juliet pos + clean real-C neg (zlib/musl/sqlite)",
+        "label":      "§30  Juliet pos + clean real-C neg (incl. lua — domain shift)",
+        "devign":     "—",
+        "preprocess": _pp_slice_pdg_v7,
+        "load_model": _load_pdg_v7,
+    },
+    {
+        "checkpoint": "model_slice_pdg_v10.pt",
+        "label":      "§31  Juliet pos + domain-matched neg (libcurl replaces lua)",
         "devign":     "—",
         "preprocess": _pp_slice_pdg_v7,
         "load_model": _load_pdg_v7,
