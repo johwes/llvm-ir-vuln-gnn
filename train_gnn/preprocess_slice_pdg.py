@@ -156,9 +156,29 @@ INPUT_SOURCES = frozenset({
 _SINK_SUFFIXES = tuple(DANGEROUS_SINKS)
 
 
+def _normalize_sink_name(name: str) -> str:
+    """Strip compiler-added decorations to recover the base function name.
+
+    Clang's FORTIFY_SOURCE replaces e.g. memcpy with __memcpy_chk — the
+    resulting IR call is no longer in DANGEROUS_SINKS by exact match.
+    Strip leading underscores and trailing _chk / _chk_warn suffixes so
+    __memcpy_chk normalizes to memcpy and is recognized.
+    """
+    name = name.lstrip("_")
+    for suffix in ("_chk_warn", "_chk"):
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+            break
+    return name
+
+
 def _is_dangerous(name: str) -> bool:
     name = name.lstrip("@")
     if name in DANGEROUS_SINKS:
+        return True
+    # Normalize __foo_chk / __foo_chk_warn → foo before matching
+    norm = _normalize_sink_name(name)
+    if norm != name and norm in DANGEROUS_SINKS:
         return True
     for s in _SINK_SUFFIXES:
         if name.endswith(s) or name.endswith("_" + s):
