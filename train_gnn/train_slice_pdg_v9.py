@@ -67,16 +67,26 @@ N_SCALAR   = 2
 
 def load_combined(juliet_pkl: Path,
                   clean_neg_pkl: Path,
-                  rng: random.Random) -> list[Data]:
+                  rng: random.Random,
+                  max_nodes: int = 500) -> list[Data]:
     """
     Load Juliet graphs and clean-negative graphs, combine, shuffle.
     Juliet pkl contains both vuln (y=1) and benign (y=0).
     Clean-neg pkl is all y=0.
+    Graphs with more than max_nodes nodes are dropped — outliers (e.g. the
+    Lua interpreter main loop at 6,123 nodes) would dominate VRAM per batch.
     Returns a combined, shuffled list.
     """
     juliet = load_graphs(juliet_pkl)
     clean  = load_graphs(clean_neg_pkl)
     combined = juliet + clean
+
+    before = len(combined)
+    combined = [g for g in combined if g.x.shape[0] <= max_nodes]
+    dropped = before - len(combined)
+    if dropped:
+        print(f"  Dropped {dropped} graphs exceeding {max_nodes} nodes")
+
     rng.shuffle(combined)
     return combined
 
@@ -85,9 +95,10 @@ def load_combined_splits(rng: random.Random,
                          juliet_train: Path,
                          juliet_valid: Path,
                          clean_train: Path,
-                         clean_valid: Path) -> tuple[list, list]:
-    train = load_combined(juliet_train, clean_train, rng)
-    valid = load_combined(juliet_valid, clean_valid, rng)
+                         clean_valid: Path,
+                         max_nodes: int = 500) -> tuple[list, list]:
+    train = load_combined(juliet_train, clean_train, rng, max_nodes)
+    valid = load_combined(juliet_valid, clean_valid, rng, max_nodes)
     return train, valid
 
 
@@ -113,6 +124,9 @@ def main() -> None:
                     help="Phase 2 learning rate")
     ap.add_argument("--batch-size",      type=int,   default=32)
     ap.add_argument("--seed",            type=int,   default=42)
+    ap.add_argument("--max-nodes",       type=int,   default=500,
+                    help="Drop graphs with more nodes than this (default 500); "
+                         "protects against outliers like luaV_execute (6123 nodes)")
     ap.add_argument("--pretrain-only",   action="store_true",
                     help="Run Phase 1 only")
     ap.add_argument("--finetune-only",   action="store_true",
@@ -216,7 +230,8 @@ def main() -> None:
         print(f"  Clean neg valid: {clean_valid.name}")
 
         d_train, d_valid = load_combined_splits(
-            rng, juliet_train, juliet_valid, clean_train, clean_valid)
+            rng, juliet_train, juliet_valid, clean_train, clean_valid,
+            max_nodes=args.max_nodes)
 
         n_vuln_tr  = sum(1 for d in d_train if d.y.item() == 1)
         n_vuln_va  = sum(1 for d in d_valid if d.y.item() == 1)
