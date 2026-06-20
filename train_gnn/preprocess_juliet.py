@@ -534,61 +534,35 @@ _C_SUFFIX = ".c"
 # injector to fix any remaining unknowns from clang stderr.
 # ---------------------------------------------------------------------------
 
-_JULIET_PREAMBLE = """\
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdint.h>
-#include <stddef.h>
+# Juliet-specific stubs only — NO macro redefinitions.
+# compile_to_ir() from preprocess.py already prepends PREAMBLE which:
+#   - includes <stdio.h>, <stdlib.h>, <string.h>, <stdint.h>, <stddef.h>
+#   - defines #define static, #define inline, #define __attribute__(x), etc.
+#   - calls _strip_asm_blocks() on our text — so we MUST NOT put any
+#     __asm__ token here or it will be corrupted to ((void)0).
+_JULIET_STUBS = """\
+#include <wchar.h>
 
-/* std_testcase.h inline — all symbols Juliet sources reference */
-void printLine(const char *line);
-void printIntLine(int line);
-void printLongLongLine(long long line);
-void printLongLine(long line);
-void printSizeTLine(size_t line);
-void printUnsignedLine(unsigned int line);
-void printHexCharLine(char c);
-void printWLine(const wchar_t *line);
-void printWcharLine(wchar_t c);
+/* std_testcase.h inline — Juliet function stubs */
+void printLine(const char *l)        { (void)l; }
+void printIntLine(int l)             { (void)l; }
+void printLongLongLine(long long l)  { (void)l; }
+void printLongLine(long l)           { (void)l; }
+void printSizeTLine(size_t l)        { (void)l; }
+void printUnsignedLine(unsigned l)   { (void)l; }
+void printHexCharLine(char c)        { (void)c; }
+void printWLine(const wchar_t *l)    { (void)l; }
+void printWcharLine(wchar_t c)       { (void)c; }
+void printFloatLine(float l)         { (void)l; }
+void printDoubleLine(double l)       { (void)l; }
 
-/* Juliet runtime helpers — bodies don't matter, only the signatures */
-static inline void printLine(const char *l)      { (void)l; }
-static inline void printIntLine(int l)           { (void)l; }
-static inline void printLongLongLine(long long l){ (void)l; }
-static inline void printLongLine(long l)         { (void)l; }
-static inline void printSizeTLine(size_t l)      { (void)l; }
-static inline void printUnsignedLine(unsigned l) { (void)l; }
-static inline void printHexCharLine(char c)      { (void)c; }
-
-/* globalReturns* / staticReturns* used by Juliet's flow-control variants */
-int  globalReturnsTrue(void)  { return 1; }
-int  globalReturnsFalse(void) { return 0; }
-int  staticReturnsTrue(void)  { return 1; }
-int  staticReturnsFalse(void) { return 0; }
-
-/* globalTrue / globalFalse — used by some CWE134 variants */
+/* Flow-control helpers used by Juliet numbered variants */
+int globalReturnsTrue(void)   { return 1; }
+int globalReturnsFalse(void)  { return 0; }
+int staticReturnsTrue(void)   { return 1; }
+int staticReturnsFalse(void)  { return 0; }
 int globalTrue  = 1;
 int globalFalse = 0;
-
-/* suppress compiler extension keywords */
-#define __attribute__(x)
-#define __extension__
-#define __inline__      static inline
-#define __volatile__    volatile
-#define __asm__(x)
-#define __builtin_expect(x,y) (x)
-
-/* static / inline visibility — make every fn visible so clang emits IR */
-#undef inline
-#define inline
-#undef static
-#define static
-
-/* wchar stubs for Juliet's wide-string variants */
-#ifndef WEOF
-#include <wchar.h>
-#endif
 """
 
 _LOCAL_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"[^"]*"\s*$', re.MULTILINE)
@@ -677,7 +651,7 @@ def process_juliet_item(item: dict) -> dict | None:
     src_text = item["src_text"]
     fn_name  = item["fn_name"]
 
-    full_source = _JULIET_PREAMBLE + "\n" + src_text
+    full_source = _JULIET_STUBS + "\n" + src_text
     ir = compile_to_ir(full_source)
     if ir is None:
         return None
@@ -826,7 +800,7 @@ def main() -> None:
         for i, ln in enumerate(item["src_text"].splitlines()[:60], 1):
             print(f"  {i:3d}: {ln}")
 
-        full = _JULIET_PREAMBLE + "\n" + item["src_text"]
+        full = _JULIET_STUBS + "\n" + item["src_text"]
         cap: list[str] = []
         ir = _pre.compile_to_ir(full, _failure_capture=cap)
         if ir is None:
