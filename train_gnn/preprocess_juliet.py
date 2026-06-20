@@ -800,6 +800,8 @@ def main() -> None:
                     default="CWE121,CWE122,CWE134,CWE415,CWE476",
                     help="Comma-separated CWE IDs to extract")
     ap.add_argument("--skip-download", action="store_true")
+    ap.add_argument("--debug-first", action="store_true",
+                    help="Show compile_to_ir stderr and graph result for the first pair, then exit")
     args = ap.parse_args()
 
     DATA.mkdir(parents=True, exist_ok=True)
@@ -815,6 +817,39 @@ def main() -> None:
 
     print("\n-- Extract Juliet function pairs ----------------------------------------")
     pairs = _extract_juliet_pairs(JULIET_ZIP, target_cwes, args.max_per_cwe)
+
+    if args.debug_first:
+        import preprocess as _pre
+        item = pairs[0]
+        print(f"\n-- debug-first: fn_name={item['fn_name']}  label={item['target']}")
+        print(f"-- Source (first 60 lines after strip):")
+        for i, ln in enumerate(item["src_text"].splitlines()[:60], 1):
+            print(f"  {i:3d}: {ln}")
+
+        full = _JULIET_PREAMBLE + "\n" + item["src_text"]
+        cap: list[str] = []
+        ir = _pre.compile_to_ir(full, _failure_capture=cap)
+        if ir is None:
+            print(f"\n-- compile_to_ir FAILED. Final stderr:")
+            print(cap[0][:4000] if cap else "(no stderr captured)")
+        else:
+            print(f"\n-- compile_to_ir OK ({len(ir)} chars)")
+            g = ir_to_graph_slice_pdg_v7(ir, fn_name=item["fn_name"])
+            if g is None:
+                print(f"-- ir_to_graph_slice_pdg_v7 returned None")
+                print(f"   (function '{item['fn_name']}' not found or no sinks)")
+                # Check if function exists in IR
+                import llvmlite.binding as _llvm
+                try:
+                    mod = _llvm.parse_assembly(ir)
+                    fns = [f.name for f in mod.functions if not f.is_declaration]
+                    print(f"   Functions in IR: {fns[:20]}")
+                except Exception as e:
+                    print(f"   IR parse error: {e}")
+            else:
+                print(f"-- graph OK: x={g['x'].shape}  edges={g['edge_index'].shape}  "
+                      f"sliced={g.get('_sliced')}  n_sinks={g.get('_n_sinks')}")
+        sys.exit(0)
 
     rng = random.Random(args.seed)
     if args.subset:
