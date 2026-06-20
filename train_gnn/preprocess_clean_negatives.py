@@ -46,7 +46,7 @@ SRC  = DATA / "clean_src"
 
 sys.path.insert(0, str(HERE))
 from preprocess import compile_to_ir
-from preprocess_juliet import ir_to_graph_slice_pdg_v7
+from preprocess_juliet import ir_to_graph_slice_pdg_v7, _LOCAL_INCLUDE_RE
 
 # ---------------------------------------------------------------------------
 # Source repositories
@@ -171,6 +171,11 @@ def process_c_file(args: tuple[str, Path]) -> list[dict]:
         src_text = c_path.read_text(errors="replace")
     except Exception:
         return []
+
+    # Strip local #include "..." lines — same technique as preprocess_juliet.py.
+    # Project headers (lua.h, uv.h, lz4.h, etc.) are not on the system path;
+    # compile_to_ir()'s iterative stub injector handles any remaining unknowns.
+    src_text = _LOCAL_INCLUDE_RE.sub("", src_text)
 
     ir = compile_to_ir(src_text)
     if ir is None:
