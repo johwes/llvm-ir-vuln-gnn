@@ -48,11 +48,11 @@ Usage:
 
 import argparse
 import ctypes
-import io
 import os
 import pickle
 import random
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -510,35 +510,52 @@ def ir_to_graph_slice_pdg_v7(ir_text: str, fn_name: str | None = None):
 # Juliet C source extraction
 # ---------------------------------------------------------------------------
 
-# Each Juliet "bad" function contains a call to printLine / printIntLine etc.
-# that marks a bug exercised by that function.  The function names follow a
-# predictable pattern: <CWE>_<Name>__<variant>_<NNN>_bad / _good / _goodG2B.
-# We match both "bad" (label=1) and "good" variants (label=0).
+# Match function *definitions* (not call sites) — Juliet names follow
+# the pattern  CWE<N>_<Name>__<variant>_<NNN>_{bad,good,goodG2B,...}
+# Capture group is the function name; we match the opening brace of the body.
+_FN_DEF_RE = re.compile(
+    r'void\s+(CWE\d+_\w+__\w+_\d+_(bad|good\w*))\s*\([^)]*\)\s*\{',
+    re.MULTILINE,
+)
 
-_BAD_RE  = re.compile(r'\b(CWE\d+_\w+__\w+_\d+_bad)\s*\(', re.MULTILINE)
-_GOOD_RE = re.compile(r'\b(CWE\d+_\w+__\w+_\d+_good\w*)\s*\(', re.MULTILINE)
-
-# Juliet zip path prefix for C test cases
 _C_SUFFIX = ".c"
 
+# ---------------------------------------------------------------------------
+# Support-header extraction — run once, reused by all workers via a shared dir
+# ---------------------------------------------------------------------------
 
-def _compile_source_to_ir(src_text: str, extra_flags: list[str] | None = None) -> str | None:
-    """Compile C source snippet to LLVM IR text via clang."""
-    flags = [
-        "clang", "-S", "-emit-llvm", "-O0",
-        "-fno-discard-value-names",
-        "-w",   # suppress warnings — Juliet has many intentional issues
-        "-o", "-",
-        "-x", "c", "-",
-    ]
-    if extra_flags:
-        flags.extend(extra_flags)
+def extract_support_headers(zip_path: Path, dest_dir: Path) -> None:
+    """
+    Extract Juliet support headers (std_testcase.h etc.) from the zip.
+
+    Juliet keeps them under  .../C/testcases/support/  inside the archive.
+    We write them to dest_dir so clang can find them via -I dest_dir.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path) as zf:
+        for zname in zf.namelist():
+            # support headers live in a path segment named "support"
+            parts = Path(zname).parts
+            if "support" in parts and zname.endswith((".h", ".c")):
+                target = dest_dir / Path(zname).name
+                if not target.exists():
+                    target.write_bytes(zf.read(zname))
+
+
+def _compile_c_file_to_ir(c_path: Path, include_dir: Path) -> str | None:
+    """Compile an on-disk C file to LLVM IR text via clang."""
     try:
         result = subprocess.run(
-            flags,
-            input=src_text.encode(),
+            [
+                "clang", "-S", "-emit-llvm", "-O0",
+                "-fno-discard-value-names",
+                "-w",                   # suppress Juliet's intentional warnings
+                f"-I{include_dir}",
+                "-o", "-",
+                str(c_path),
+            ],
             capture_output=True,
-            timeout=30,
+            timeout=60,
         )
         if result.returncode == 0 and result.stdout:
             return result.stdout.decode(errors="replace")
@@ -547,24 +564,22 @@ def _compile_source_to_ir(src_text: str, extra_flags: list[str] | None = None) -
     return None
 
 
-def _find_function_ir(ir_text: str, fn_name: str) -> str | None:
-    """Return IR text only for fn_name from a module, or None if not found."""
-    try:
-        mod = llvm.parse_assembly(ir_text)
-    except Exception:
-        return None
-    for fn in mod.functions:
-        if not fn.is_declaration and fn.name == fn_name:
-            return ir_text
-    return None
+# ---------------------------------------------------------------------------
+# Pair extraction from zip — one entry per function definition
+# ---------------------------------------------------------------------------
 
-
-def _extract_juliet_pairs(zip_path: Path, target_cwes: set[str],
+def _extract_juliet_pairs(zip_path: Path,
+                           support_dir: Path,
+                           target_cwes: set[str],
                            max_per_cwe: int | None = None) -> list[dict]:
     """
-    Walk the Juliet zip, collect (source_text, fn_name, label) triples.
+    Walk the Juliet zip, collect one dict per bad/good function *definition*.
 
-    Returns list of dicts: {"func": str (C source), "fn_name": str, "target": int}
+    Returns list of dicts:
+      {"zip_name": str, "fn_name": str, "target": int (0/1)}
+
+    We record the zip path and function name; the worker extracts the file
+    and compiles it with -I support_dir at processing time.
     """
     pairs: list[dict] = []
     cwe_counts: dict[str, int] = defaultdict(int)
@@ -572,17 +587,22 @@ def _extract_juliet_pairs(zip_path: Path, target_cwes: set[str],
     print(f"  Scanning {zip_path.name} for CWEs: {sorted(target_cwes)} ...")
 
     with zipfile.ZipFile(zip_path) as zf:
-        names = [n for n in zf.namelist()
-                 if n.endswith(_C_SUFFIX) and not n.endswith("_helpers.c")]
+        c_names = [n for n in zf.namelist() if n.endswith(_C_SUFFIX)]
 
-        for zname in names:
-            # Check which CWE this file belongs to
+        for zname in c_names:
+            parts = Path(zname).parts
+
+            # Skip support/ files (headers / helper stubs)
+            if "support" in parts:
+                continue
+
+            # Identify CWE
             cwe = None
-            for part in Path(zname).parts:
+            for part in parts:
                 if part.startswith("CWE"):
-                    cwe_candidate = part.split("_")[0]  # e.g. CWE121
-                    if cwe_candidate in target_cwes:
-                        cwe = cwe_candidate
+                    candidate = part.split("_")[0]
+                    if candidate in target_cwes:
+                        cwe = candidate
                         break
             if cwe is None:
                 continue
@@ -595,52 +615,65 @@ def _extract_juliet_pairs(zip_path: Path, target_cwes: set[str],
             except Exception:
                 continue
 
-            bad_fns  = _BAD_RE.findall(src_text)
-            good_fns = _GOOD_RE.findall(src_text)
-
-            for fn in bad_fns:
-                pairs.append({"func": src_text, "fn_name": fn, "target": 1})
-                cwe_counts[cwe] += 1
-            for fn in good_fns:
-                pairs.append({"func": src_text, "fn_name": fn, "target": 0})
+            for m in _FN_DEF_RE.finditer(src_text):
+                fn_name = m.group(1)
+                is_bad  = "_bad" in fn_name and not fn_name.endswith("_bad_sink")
+                label   = 1 if is_bad else 0
+                pairs.append({"zip_name": zname, "fn_name": fn_name, "target": label})
                 cwe_counts[cwe] += 1
 
-    print(f"  Found {len(pairs)} bad/good function references across CWEs:")
+    print(f"  Found {len(pairs)} function definitions across CWEs:")
     for cwe in sorted(cwe_counts):
         print(f"    {cwe}: {cwe_counts[cwe]}")
     return pairs
 
 
 # ---------------------------------------------------------------------------
-# Per-item processing
+# Per-item processing — each worker extracts its own temp copy and compiles
 # ---------------------------------------------------------------------------
 
+# These are set as module-level globals so worker processes can access them
+# without pickling (set in main before the process pool is created).
+_JULIET_ZIP_PATH: str  = ""
+_SUPPORT_DIR_PATH: str = ""
+
+
+def _init_worker(zip_path: str, support_dir: str) -> None:
+    global _JULIET_ZIP_PATH, _SUPPORT_DIR_PATH
+    _JULIET_ZIP_PATH   = zip_path
+    _SUPPORT_DIR_PATH  = support_dir
+
+
 def process_juliet_item(item: dict) -> dict | None:
-    """Compile C source to IR, extract named function, build PDG slice graph."""
-    src_text = item["func"]
-    fn_name  = item["fn_name"]
+    """
+    Worker entry: extract one .c file from the zip, compile to IR,
+    build PDG slice graph for the named function.
+    """
+    zip_name    = item["zip_name"]
+    fn_name     = item["fn_name"]
+    support_dir = Path(_SUPPORT_DIR_PATH)
+    zip_path    = Path(_JULIET_ZIP_PATH)
 
-    # Extra stub definitions Juliet expects
-    preamble = (
-        "// Juliet stubs\n"
-        "void printLine(const char *line) {}\n"
-        "void printIntLine(int line) {}\n"
-        "void printLongLine(long line) {}\n"
-        "void printSizeTLine(size_t line) {}\n"
-        "int globalReturnsTrue(void) { return 1; }\n"
-        "int globalReturnsFalse(void) { return 0; }\n"
-        "int staticReturnsTrue(void) { return 1; }\n"
-        "int staticReturnsFalse(void) { return 0; }\n"
-        "void *ALLOCA(size_t n) { return __builtin_alloca(n); }\n"
-    )
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
 
-    ir = _compile_source_to_ir(preamble + src_text)
-    if ir is None:
-        return None
+        # Extract the source file
+        try:
+            with zipfile.ZipFile(zip_path) as zf:
+                src_bytes = zf.read(zip_name)
+        except Exception:
+            return None
 
-    g = ir_to_graph_slice_pdg_v7(ir, fn_name=fn_name)
-    if g is None:
-        return None
+        c_file = td_path / Path(zip_name).name
+        c_file.write_bytes(src_bytes)
+
+        ir = _compile_c_file_to_ir(c_file, support_dir)
+        if ir is None:
+            return None
+
+        g = ir_to_graph_slice_pdg_v7(ir, fn_name=fn_name)
+        if g is None:
+            return None
 
     g["y"]       = int(item["target"])
     g["fn_name"] = fn_name
@@ -769,8 +802,18 @@ def main() -> None:
         print(f"       Download from: {JULIET_URL}")
         sys.exit(1)
 
+    # Extract support headers once into a persistent dir under data/
+    support_dir = DATA / "juliet_support"
+    print(f"\n-- Extracting support headers → {support_dir} --")
+    extract_support_headers(JULIET_ZIP, support_dir)
+    hdrs = list(support_dir.glob("*.h"))
+    print(f"  {len(hdrs)} header(s): {[h.name for h in hdrs]}")
+
+    # Set globals so single-worker path also works
+    _init_worker(str(JULIET_ZIP), str(support_dir))
+
     print("\n-- Extract Juliet function pairs ----------------------------------------")
-    pairs = _extract_juliet_pairs(JULIET_ZIP, target_cwes, args.max_per_cwe)
+    pairs = _extract_juliet_pairs(JULIET_ZIP, support_dir, target_cwes, args.max_per_cwe)
 
     rng = random.Random(args.seed)
     if args.subset:
@@ -804,7 +847,12 @@ def main() -> None:
                 if i % 200 == 0:
                     print(f"  {i}/{total}  ok={ok}  fail={fail}")
         else:
-            with ProcessPoolExecutor(max_workers=args.workers) as pool:
+            initargs = (str(JULIET_ZIP), str(support_dir))
+            with ProcessPoolExecutor(
+                max_workers=args.workers,
+                initializer=_init_worker,
+                initargs=initargs,
+            ) as pool:
                 futs = {pool.submit(process_juliet_item, it): it for it in items}
                 for i, fut in enumerate(as_completed(futs), 1):
                     g = fut.result()
