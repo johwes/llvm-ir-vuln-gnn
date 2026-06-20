@@ -140,6 +140,15 @@ DANGEROUS_SINKS = frozenset({
     "printf", "fprintf", "syslog", "err", "warn",
 })
 
+# Functions whose return value is user-controlled / network-facing input.
+# A mock node for any of these in the slice means external data reaches the sink.
+INPUT_SOURCES = frozenset({
+    "read", "recv", "recvfrom", "pread",
+    "fgets", "fread", "getline", "getdelim",
+    "scanf", "sscanf", "fscanf",
+    "gets",
+})
+
 _SINK_SUFFIXES = tuple(DANGEROUS_SINKS)
 
 
@@ -293,8 +302,14 @@ def _extract_slice_pdg(x, edge_index, edge_type, mock_names,
     new_edge_type  = (np.array(new_et, dtype=np.int64)
                       if new_et  else np.zeros(0, dtype=np.int64))
 
+    # Collect input-source mock nodes that landed in the slice
+    source_fn_names = {old_to_new[nid]: _canonical_name(mock_names[nid])
+                       for nid, nm in mock_names.items()
+                       if _canonical_name(nm) in INPUT_SOURCES
+                       and nid in old_to_new}
+
     return {"x": new_x, "edge_index": new_edge_index, "edge_type": new_edge_type,
-            "sink_fn_names": sink_fn_names,
+            "sink_fn_names": sink_fn_names, "source_fn_names": source_fn_names,
             "_sliced": True, "_n_sinks": len(sink_ids)}
 
 
@@ -474,7 +489,7 @@ def ir_to_graph_slice_pdg(ir_text, fn_name: str | None = None):
                             instr_to_block, block_preds, block_last_instr)
     if g is None:
         g = {"x": x, "edge_index": edge_index, "edge_type": edge_type,
-             "sink_fn_names": {}, "_sliced": False, "_n_sinks": 0}
+             "sink_fn_names": {}, "source_fn_names": {}, "_sliced": False, "_n_sinks": 0}
 
     return g
 

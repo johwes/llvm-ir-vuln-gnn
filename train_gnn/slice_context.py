@@ -44,6 +44,17 @@ ICMP_OPCODES = frozenset({
     86, 87, 88, 89,  # ult, ule, ugt, uge
 })
 
+# Subsets of ICMP_OPCODES by structural meaning
+_BOUNDS_CHECK_OPCODES = frozenset({82, 83, 84, 85, 86, 87, 88, 89})  # slt/sle/sgt/sge/ult/ule/ugt/uge
+_NULL_CHECK_OPCODES   = frozenset({80, 81})                           # eq, ne
+
+_ICMP_LABEL: dict[int, str] = {
+    80: "eq", 81: "ne",
+    82: "slt", 83: "sle", 84: "sgt", 85: "sge",
+    86: "ult", 87: "ule", 88: "ugt", 89: "uge",
+    46: "icmp",
+}
+
 # Human-readable display names for IR opcodes that appear as sinks.
 # Keyed by the internal name used in _SINK_INFO / sink_fn_names.
 _DISPLAY_NAMES: dict[str, str] = {
@@ -152,8 +163,20 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
 
     opcodes = [int(x[i, 0]) for i in range(N)]
 
-    sink_fn_names: dict[int, str] = g.get("sink_fn_names", {})
+    sink_fn_names:   dict[int, str] = g.get("sink_fn_names", {})
+    source_fn_names: dict[int, str] = g.get("source_fn_names", {})
     sink_mask = g.get("sink_mask", None)
+
+    # ---- build DFG adjacency (used for distance + guard path analysis) -----
+    # fwd_dfg[src] = [dst, ...]  — DFG edges only (edge_type == 1)
+    from collections import deque
+    fwd_dfg: dict[int, list[int]] = {}
+    rev_dfg: dict[int, list[int]] = {}
+    for e in range(E):
+        if int(edge_type[e]) == 1:
+            s, d = int(edge_index[0, e]), int(edge_index[1, e])
+            fwd_dfg.setdefault(s, []).append(d)
+            rev_dfg.setdefault(d, []).append(s)
 
     # ---- identify sinks ------------------------------------------------
     sinks = []
@@ -198,9 +221,59 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
     if not input_channels:
         input_channels.append("internal_computation")
 
+    # ---- external input flag -------------------------------------------
+    # True if a known input-source function (recv/read/fgets/...) appears as
+    # a mock node in the slice — meaning network/user data reaches the sink.
+    is_external_input = bool(source_fn_names)
+    external_sources  = sorted(set(source_fn_names.values()))
+
     # ---- guard check ---------------------------------------------------
     guard_count = sum(1 for opc in opcodes if opc in ICMP_OPCODES)
     has_guard   = guard_count > 0
+
+    # ---- guard direction -----------------------------------------------
+    # Classify which kinds of comparisons guard this slice.
+    # bounds_check: relational (<, <=, >, >=) — protects buffer writes
+    # null_check:   equality (==, !=) — protects pointer dereferences
+    bounds_check_count = sum(1 for opc in opcodes if opc in _BOUNDS_CHECK_OPCODES)
+    null_check_count   = sum(1 for opc in opcodes if opc in _NULL_CHECK_OPCODES)
+    # Dominant guard type; "mixed" when both present
+    if bounds_check_count > 0 and null_check_count > 0:
+        guard_type = "mixed"
+    elif bounds_check_count > 0:
+        guard_type = "bounds_check"
+    elif null_check_count > 0:
+        guard_type = "null_check"
+    else:
+        guard_type = "none"
+    # Collect the specific predicate labels present
+    guard_predicates = sorted({_ICMP_LABEL[opc]
+                                for opc in opcodes
+                                if opc in ICMP_OPCODES and opc in _ICMP_LABEL})
+
+    # ---- sink-source hop distance --------------------------------------
+    # BFS forward from all argument and input-source mock nodes through DFG edges.
+    # Records minimum hop count to each sink node.
+    source_nodes = {i for i, opc in enumerate(opcodes)
+                    if opc == IDX_ARGUMENT or i in source_fn_names}
+    sink_node_ids = {s["node"] for s in sinks}
+
+    dist: dict[int, int] = {n: 0 for n in source_nodes}
+    queue = deque(source_nodes)
+    while queue:
+        node = queue.popleft()
+        for nxt in fwd_dfg.get(node, []):
+            if nxt not in dist:
+                dist[nxt] = dist[node] + 1
+                queue.append(nxt)
+
+    # Attach distance to each sink entry
+    for s in sinks:
+        s["distance"] = dist.get(s["node"])   # None if unreachable from sources
+
+    min_distance = (min((s["distance"] for s in sinks if s["distance"] is not None),
+                        default=None)
+                    if sinks else None)
 
     # ---- integer truncation signal ------------------------------------
     # trunc (opcode 48) narrows an integer type (e.g. i64->i32).
@@ -282,10 +355,20 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
             f" = {guard_density:.1f} sinks/guard ({guard_density_label})"
         )
 
+    ext_note = ""
+    if is_external_input:
+        src_list = ", ".join(external_sources) if external_sources else "external source"
+        ext_note = f" [network/user-controlled via {src_list}]"
+
+    dist_note = ""
+    if min_distance is not None:
+        dist_note = f" Minimum source-to-sink distance: {min_distance} hop(s)."
+
     natural_language = (
         f"Function `{fn_name}` contains: {'; '.join(sink_strs)}. "
-        f"Input originates from: {channel_note}. "
+        f"Input originates from: {channel_note}{ext_note}. "
         f"Guard status: {guard_note}. "
+        f"{dist_note}"
         f"Slice: {N} nodes, {n_sinks} sink(s) ({len(unique_sinks)} unique type(s))."
     )
 
@@ -304,10 +387,17 @@ def summarize_slice(g: dict, fn_name: str = "unknown") -> dict:
         "sinks":              sinks,
         "sink_counts":        dict(sink_counts),
         "input_channels":     input_channels,
+        "is_external_input":  is_external_input,
+        "external_sources":   external_sources,
         "guard_count":        guard_count,
         "has_guard":          has_guard,
+        "guard_type":         guard_type,
+        "guard_predicates":   guard_predicates,
+        "bounds_check_count": bounds_check_count,
+        "null_check_count":   null_check_count,
         "guard_density":      guard_density,
         "guard_density_label":guard_density_label,
+        "min_distance":       min_distance,
         "trunc_count":        trunc_count,
         "has_trunc":          has_trunc,
         "natural_language":   natural_language,
@@ -355,19 +445,42 @@ def format_for_llm(summary: dict, score: float | None = None,
     lines.append("Sinks           : " + ("; ".join(sink_labels) if sink_labels
                                           else "none identified"))
 
-    lines.append("Input channels  : " + ", ".join(summary["input_channels"]))
+    # Input channels + external input flag
+    channels = ", ".join(summary["input_channels"])
+    if summary.get("is_external_input"):
+        srcs = ", ".join(summary.get("external_sources", []))
+        channels += f"  [external_input=YES via {srcs}]" if srcs else "  [external_input=YES]"
+    lines.append("Input channels  : " + channels)
 
     n_sinks = summary["n_sinks"]
     gc      = summary["guard_count"]
+    gtype   = summary.get("guard_type", "none")
+    preds   = summary.get("guard_predicates", [])
+    pred_str = f" ({', '.join(preds)})" if preds else ""
     if not summary["has_guard"]:
         guard = "NO icmp in slice — sink appears UNGUARDED"
     elif n_sinks == 0:
-        guard = f"{gc} comparison(s) present"
+        guard = f"{gc} comparison(s){pred_str} present"
     else:
         gd    = summary.get("guard_density", n_sinks / gc)
         label = summary.get("guard_density_label", "")
-        guard = f"{gc} guard(s) / {n_sinks} sink(s) = {gd:.1f} sinks/guard ({label})"
+        if gtype == "bounds_check":
+            gtype_str = "bounds-check"
+        elif gtype == "null_check":
+            gtype_str = "null-check only — may not protect buffer writes"
+        elif gtype == "mixed":
+            gtype_str = "bounds-check + null-check"
+        else:
+            gtype_str = gtype
+        guard = (f"{gc} guard(s){pred_str} [{gtype_str}]"
+                 f" / {n_sinks} sink(s) = {gd:.1f} sinks/guard ({label})")
     lines.append("Guard status    : " + guard)
+
+    # Sink-source distance
+    min_dist = summary.get("min_distance")
+    if min_dist is not None:
+        lines.append(f"Distance        : {min_dist} hop(s) source→sink")
+
     if summary.get("has_trunc"):
         lines.append(f"Trunc warning   : {summary['trunc_count']} integer narrowing(s) — check size args for truncation")
     lines.append("Harness target  : " + summary["harness_hint"])
