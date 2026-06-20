@@ -60,7 +60,6 @@ import zipfile
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from urllib.request import urlretrieve
 
 import numpy as np
 import llvmlite.binding as llvm
@@ -652,6 +651,9 @@ def process_juliet_item(item: dict) -> dict | None:
 # Download Juliet
 # ---------------------------------------------------------------------------
 
+# NIST SARD blocks plain urllib (no User-Agent). Try curl → wget → urllib
+# with a browser UA in that order.  If all fail, print manual instructions.
+
 def download_juliet(zip_path: Path) -> None:
     if zip_path.exists():
         print(f"  {zip_path.name} already present, skipping download.")
@@ -662,14 +664,75 @@ def download_juliet(zip_path: Path) -> None:
     print("  (This may take a few minutes on a slow connection.)")
 
     zip_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = zip_path.with_suffix(".tmp")
 
-    def _progress(count, block, total):
-        if total > 0 and count % 500 == 0:
-            pct = min(100, count * block / total * 100)
-            print(f"    {pct:.0f}%", end="\r", flush=True)
+    # 1. curl
+    try:
+        ret = subprocess.run(
+            ["curl", "-L", "--fail", "-A",
+             "Mozilla/5.0 (compatible; juliet-downloader/1.0)",
+             "-o", str(tmp), JULIET_URL],
+            check=True,
+        )
+        tmp.rename(zip_path)
+        print(f"\n  Downloaded via curl → {zip_path}")
+        return
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
 
-    urlretrieve(JULIET_URL, zip_path, reporthook=_progress)
-    print(f"\n  Downloaded to {zip_path}")
+    # 2. wget
+    try:
+        subprocess.run(
+            ["wget", "-q", "--show-progress",
+             "-U", "Mozilla/5.0 (compatible; juliet-downloader/1.0)",
+             "-O", str(tmp), JULIET_URL],
+            check=True,
+        )
+        tmp.rename(zip_path)
+        print(f"\n  Downloaded via wget → {zip_path}")
+        return
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    # 3. urllib with browser User-Agent
+    import urllib.request as _ureq
+    req = _ureq.Request(
+        JULIET_URL,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; juliet-downloader/1.0)"},
+    )
+    try:
+        with _ureq.urlopen(req) as resp, open(tmp, "wb") as fh:
+            total = int(resp.headers.get("Content-Length", 0))
+            done  = 0
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                done += len(chunk)
+                if total:
+                    print(f"    {done/total*100:.0f}%", end="\r", flush=True)
+        tmp.rename(zip_path)
+        print(f"\n  Downloaded via urllib → {zip_path}")
+        return
+    except Exception as exc:
+        if tmp.exists():
+            tmp.unlink()
+        print(f"\n  urllib failed: {exc}")
+
+    # All methods failed — print manual instructions and exit
+    print()
+    print("  ╔══════════════════════════════════════════════════════════════╗")
+    print("  ║  Automatic download failed (NIST SARD requires browser).    ║")
+    print("  ║                                                              ║")
+    print("  ║  Manual download:                                            ║")
+    print(f"  ║    {JULIET_URL[:58]}  ║")
+    print("  ║                                                              ║")
+    print(f"  ║  Save to: {str(zip_path)[:54]}  ║")
+    print("  ║                                                              ║")
+    print("  ║  Then re-run with --skip-download                           ║")
+    print("  ╚══════════════════════════════════════════════════════════════╝")
+    sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
