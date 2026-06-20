@@ -41,6 +41,8 @@ Locally retrained models (not on HuggingFace — run the matching train script):
     model_instr_v6.pt        python train_instr_v6.py        (needs data/*_instr_v6_graphs.pkl)
     model_bigvul_cls.pt      python train_bigvul_cls.py      (needs preprocess_bigvul_cls.py first)
     model_bigvul_combined.pt python train_bigvul_cls.py --combine-devign
+    model_slice_pdg_v7.pt    python train_slice_pdg_v7.py   (needs preprocess_juliet.py first)
+    model_slice_pdg_v8.pt    python train_slice_pdg_v8.py   (needs preprocess_juliet.py first)
 """
 
 import argparse
@@ -74,8 +76,9 @@ from preprocess_slice        import ir_to_graph_slice        as _pp_slice
 from preprocess_slice_pdg    import ir_to_graph_slice_pdg    as _pp_slice_pdg
 from preprocess_slice_pdg_v2 import ir_to_graph_slice_pdg_v2 as _pp_slice_pdg_v2
 from preprocess_slice_pdg_v3 import ir_to_graph_slice_pdg_v3 as _pp_slice_pdg_v3
-# §27 uses the same PDG slice graph as §12 — model input is zero-padded to (N,3)
+# §27/§28 use the same PDG slice graph as §12 — model input is zero-padded to (N,3)
 _pp_slice_pdg_v7 = _pp_slice_pdg
+_pp_slice_pdg_v8 = _pp_slice_pdg
 
 # ---------------------------------------------------------------------------
 # Import model modules under unambiguous aliases
@@ -93,6 +96,7 @@ import train_slice_pdg     as _m_pdg
 import train_slice_pdg_v2  as _m_pdg_v2
 import train_slice_pdg_v3  as _m_pdg_v3
 import train_slice_pdg_v7  as _m_pdg_v7
+import train_slice_pdg_v8  as _m_pdg_v8   # §28 — same arch as v7, RankNet fine-tune
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +205,18 @@ def _load_pdg_v3(path: Path) -> nn.Module:
     embed_dim  = ckpt["embed.weight"].shape[1]
     hidden     = ckpt["lin.weight"].shape[1]
     m = _m_pdg_v3.SlicePDGGNNv3(vocab_size, embed_dim, hidden)
+    m.load_state_dict(ckpt)
+    return m.eval()
+
+
+def _load_pdg_v8(path: Path) -> nn.Module:
+    """Load §28 checkpoint — identical architecture to §27 (SlicePDGGNN_v7)."""
+    ckpt = torch.load(path, map_location="cpu", weights_only=True)
+    vocab_size = ckpt["embed.weight"].shape[0]
+    embed_dim  = ckpt["embed.weight"].shape[1]
+    hidden     = ckpt["lin.weight"].shape[1]
+    n_scalar   = ckpt["scalar_proj.weight"].shape[1] if "scalar_proj.weight" in ckpt else 2
+    m = _m_pdg_v8.SlicePDGGNN_v7(vocab_size, embed_dim, hidden, n_scalar)
     m.load_state_dict(ckpt)
     return m.eval()
 
@@ -334,10 +350,17 @@ REGISTRY = [
     },
     {
         "checkpoint": "model_slice_pdg_v7.pt",
-        "label":      "§27  PDG slice, Juliet pretrain + Devign FT",
+        "label":      "§27  PDG slice, Juliet pretrain + Devign BCE FT",
         "devign":     "56.12%",
         "preprocess": _pp_slice_pdg_v7,
         "load_model": _load_pdg_v7,
+    },
+    {
+        "checkpoint": "model_slice_pdg_v8.pt",
+        "label":      "§28  PDG slice, Juliet pretrain + Devign RankNet FT",
+        "devign":     "—",
+        "preprocess": _pp_slice_pdg_v8,
+        "load_model": _load_pdg_v8,
     },
 ]
 

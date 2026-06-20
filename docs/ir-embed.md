@@ -2897,9 +2897,54 @@ Juliet val accuracy reaches **99%+ by epoch 3** and holds. Expected: the structu
 
 ---
 
+## §28 — Juliet Pretrain + Devign RankNet Fine-tune
+
+**Scripts:** `preprocess_juliet.py` + `train_slice_pdg_v8.py`
+**Architecture:** SlicePDGGNN_v7 — identical to §27 (multi-feature x(N,3), same RGCN backbone)
+
+### Motivation
+
+§27 showed Juliet pretraining transfers without catastrophic forgetting — parity with §12 (11/13). But Phase 2 in §27 still uses binary cross-entropy on Devign's commit-level labels. This trains a classifier, not a ranker. The scarnet evaluation is a ranking problem.
+
+**The mismatch:** BCE punishes a confident-but-wrong prediction with a large gradient. Under ~15% label noise, roughly 1 in 7 training examples send the model in the wrong direction — and the gradient is largest exactly when the model is most confident. RankNet loss is comparatively robust: a mislabelled pair wastes one training pair but does not produce a large wrong-direction gradient because `score(v) - score(b)` is near zero for hard pairs.
+
+**RankNet loss:** for each mini-batch, form all `(vuln, benign)` pairs and minimise:
+
+```
+L = mean over (v, b) pairs:  softplus(-(score_v - score_b))
+  = -log σ(score_v - score_b)
+```
+
+This is `P(v ranks above b)` maximisation — training objective now directly matches the ranking evaluation.
+
+**Devign accuracy note:** a model that learns the correct ranking will have Devign accuracy near 50% if scores are centred — high for vuln, low for benign, but the binary threshold still misclassifies labelled-vuln functions that are structurally guarded. **Expect Devign accuracy ≤ §12/§27. The meaningful metric is scarnet ranking.**
+
+### Training
+
+- Phase 1 (Juliet BCE): identical to §27 — reuses `model_juliet_pretrain.pt` if present, skips re-training
+- Phase 2 (Devign RankNet): 40 epochs, lr=1e-4, batch 32 → up to 256 pairs/step
+  - Fallback to BCE for single-class batches (ensures gradient flow)
+
+### Results
+
+*To be filled after training. Run:*
+
+```bash
+python train_slice_pdg_v8.py --finetune-only --finetune-epochs 40
+python eval_all_models.py --scarnet --answer-key ~/Downloads/SCAR/scarnet-answer-key.txt
+```
+
+**What to look for:**
+- Devign accuracy may be 50–55% — expected, not a regression
+- scarnet ranking vs §12/§27 (11/13 baseline) is the real signal
+- If ranking improves: RankNet's noise-robustness advantage is real
+- If ranking is unchanged: the 15% noise floor also limits pairwise signal extraction
+
+---
+
 ## Current Conclusion
 
-27 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, BigVul-trained, taint-augmented, sink-node readout, intrinsic-aware, PrimeVul-trained, and Juliet-pretrained GNNs on Devign, scarnet, and zero-shot transfer to zlib v1.2.11. Every approach converges at the same ceiling: **~55–58% Devign accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%. Switching datasets (BigVul §21, PrimeVul §25), changing architecture (sink-node readout §23), fixing preprocessing (intrinsic-aware sinks §24), and adding semantic annotations (taint flags §22) all fail to improve the scarnet real-world benchmark beyond §12's 11/13.
+28 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, BigVul-trained, taint-augmented, sink-node readout, intrinsic-aware, PrimeVul-trained, Juliet-pretrained (BCE and RankNet) GNNs on Devign, scarnet, and zero-shot transfer to zlib v1.2.11. Every approach converges at the same ceiling: **~55–58% Devign accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%. Switching datasets (BigVul §21, PrimeVul §25), changing architecture (sink-node readout §23), fixing preprocessing (intrinsic-aware sinks §24), and adding semantic annotations (taint flags §22) all fail to improve the scarnet real-world benchmark beyond §12's 11/13.
 
 The 7pp gap to CodeBERT is real and has three distinct causes:
 
@@ -2933,7 +2978,7 @@ Devign labels are assigned at git-commit granularity to the function that change
 
 The highest-leverage path remaining within the LLVM IR constraint is **cleaner training signal at the structural level** — matched vulnerable/fixed pairs where the only difference is the presence or absence of a single guard subgraph. The Juliet Test Suite (NSA/NIST, ~100,000 synthetic C functions per CWE, exactly matched bad/good pairs) provides this: zero label noise, zero attrition, instruction-level ground truth implicit in the pair structure. Pretraining on Juliet then fine-tuning on Devign (§27) is the next experiment.
 
-Beyond data: the model currently outputs a score that is not well-calibrated against structural ground truth. The training objective (binary cross-entropy on noisy labels) does not directly optimise for the ranking use case — ranking unguarded sinks above guarded sinks above no sinks. A pairwise ranking loss derived directly from slice properties (no labels required) would align the training signal with what the model is actually used for in the SCAR pipeline.
+Beyond data: §28 replaces Phase 2's BCE with a pairwise RankNet loss — for each mini-batch, all (vuln, benign) pairs are formed and `P(score_v > score_b)` is maximised directly. This aligns the training objective with the scarnet ranking use case without requiring clean labels. Results pending.
 
 ### Practical value for SCAR
 
