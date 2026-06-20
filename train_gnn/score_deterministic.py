@@ -26,7 +26,8 @@ MAX ensemble (--gnn-checkpoint):
 
 Usage:
     python score_deterministic.py --scarnet --answer-key scarnet-answer-key.txt
-    python score_deterministic.py --ir-dir /tmp/scarnet-ir/ --answer-key ...
+    python score_deterministic.py --ir-dir /tmp/ir/
+    python score_deterministic.py --ir-dir /tmp/ir/ --no-gep-only
     python score_deterministic.py --scarnet --answer-key ... \\
         --gnn-checkpoint model_slice_pdg_v8.pt
 """
@@ -262,6 +263,10 @@ def main() -> None:
     ap.add_argument("--top-k",      type=int, default=None)
     ap.add_argument("--gnn-checkpoint", type=str, default=None,
                     help="Optional SlicePDGGNN_v7 .pt file — enables MAX ensemble column")
+    ap.add_argument("--no-gep-only", action="store_true",
+                    help="Suppress functions whose only sinks are getelementptr (GEP). "
+                         "Reduces false positives in codebases with heavily-indexed "
+                         "data structures (e.g. compression libraries).")
     ap.add_argument("--verbose",    action="store_true")
     args = ap.parse_args()
 
@@ -298,6 +303,7 @@ def main() -> None:
     rule_scores: dict[str, float]        = {}
     gnn_scores:  dict[str, float | None] = {}
     details:     dict[str, str]          = {}
+    summaries:   dict[str, dict]         = {}
     no_slice_rule = []
     no_slice_gnn  = []
 
@@ -310,6 +316,7 @@ def main() -> None:
             no_slice_rule.append(fn_name)
         else:
             summary              = summarize_slice(g, fn_name=fn_name)
+            summaries[fn_name]   = summary
             rule_scores[fn_name] = philosophy2_score(summary)
             ns    = summary["n_sinks"]
             hg    = summary["has_guard"]
@@ -330,6 +337,25 @@ def main() -> None:
             gnn_scores[fn_name] = gs
             if gs is None:
                 no_slice_gnn.append(fn_name)
+
+    # --- --no-gep-only filter ---
+    # Drop functions whose only sinks are GEP (array index) instructions.
+    # These are false positives in codebases with heavily-indexed data structures
+    # where every table access becomes a GEP "sink" — the signal is too coarse.
+    if args.no_gep_only:
+        gep_only_fns = set()
+        for fn_name, summary in summaries.items():
+            sink_types = {s.get("fn") for s in summary["sinks"]}
+            if sink_types and sink_types <= {"getelementptr"}:
+                gep_only_fns.add(fn_name)
+        if gep_only_fns:
+            print(f"--no-gep-only: suppressing {len(gep_only_fns)} GEP-only function(s): "
+                  + ", ".join(sorted(gep_only_fns)))
+            for fn_name in gep_only_fns:
+                rule_scores[fn_name] = 0.05
+                details[fn_name]    += "  [gep-only suppressed]"
+                if fn_name in gnn_scores:
+                    gnn_scores[fn_name] = 0.05
 
     # --- build ranked lists ---
     rule_ranked = sorted(rule_scores.items(), key=lambda x: x[1], reverse=True)
