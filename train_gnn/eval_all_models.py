@@ -369,6 +369,13 @@ REGISTRY = [
         "preprocess": _pp_slice_pdg_v7,
         "load_model": _load_pdg_v7,
     },
+    {
+        "checkpoint": "model_slice_pdg_v9.pt",
+        "label":      "§30  Juliet pos + clean real-C neg (zlib/musl/sqlite)",
+        "devign":     "—",
+        "preprocess": _pp_slice_pdg_v7,
+        "load_model": _load_pdg_v7,
+    },
 ]
 
 

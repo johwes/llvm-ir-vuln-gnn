@@ -3030,7 +3030,52 @@ The correct negative class for a Juliet-pretrained model is not only Juliet good
 
 ## Current Conclusion
 
-28 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, BigVul-trained, taint-augmented, sink-node readout, intrinsic-aware, PrimeVul-trained, Juliet-pretrained (BCE and RankNet) GNNs on Devign, scarnet, and zero-shot transfer to zlib v1.2.11. Every approach converges at the same ceiling: **~55–58% Devign accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%. Switching datasets (BigVul §21, PrimeVul §25), changing architecture (sink-node readout §23), fixing preprocessing (intrinsic-aware sinks §24), and adding semantic annotations (taint flags §22) all fail to improve the scarnet real-world benchmark beyond §12's 11/13.
+28 experiments across block-level, instruction-level, slice-based, contrastive, feature-enriched, BigVul-trained, taint-augmented, sink-node readout, intrinsic-aware, PrimeVul-trained, Juliet-pretrained (BCE and RankNet) GNNs on Devign, scarnet, and zero-shot transfer to zlib v1.2.11.
+
+---
+
+## §30 — Juliet Positives + Clean Real-C Negatives (no Devign)
+
+**Scripts:** `preprocess_clean_negatives.py` + `train_slice_pdg_v9.py`
+**Architecture:** SlicePDGGNN_v7 — identical to §27/§28/§29
+
+### Motivation
+
+§29 proved the Juliet-only model saturates on real production code because its negative class (Juliet good functions) is synthetic and unlike real C. §27/§28 fix saturation by fine-tuning on Devign — but Devign re-introduces commit-history fingerprinting and ~15% label noise.
+
+§30 replaces Devign entirely:
+
+| | Source | Label | Label quality |
+|---|---|---|---|
+| Positives | Juliet bad functions | 1 | Zero noise — definitional |
+| Negatives | Juliet good + zlib + musl + SQLite | 0 | Near-zero — heavily audited |
+
+The model learns "unguarded dangerous sink" (from Juliet bad) vs "real clean C" (from real projects) — with no commit history, no noise, and real calibration.
+
+### Clean negative sources
+
+- **zlib** (`github.com/madler/zlib`) — ~50 functions, memory/compression
+- **musl libc** (`github.com/bminor/musl`) — ~2,000 functions from `src/string`, `src/stdlib`, `src/stdio`, `src/malloc`, `src/math` and other portable subdirectories
+- **SQLite amalgamation** — ~1,500 functions, diverse real C idioms
+
+All three compile cleanly via `compile_to_ir()`. All labelled `y=0`.
+
+### Training
+
+- Phase 1 (Juliet-only BCE): reuses `model_juliet_pretrain.pt` from §27/§28 if present
+- Phase 2: Juliet bad + (Juliet good + zlib + musl + SQLite) combined negatives, BCE, 40 epochs, lr=3e-4
+- No Devign anywhere — no test accuracy number (Devign test set is irrelevant)
+- Evaluate directly on scarnet
+
+### Results
+
+*To be filled after training.*
+
+**What to look for:**
+- Score spread wider than §27 (currently 39–81%) — benign functions should drop below 40%, confirmed sinks above 65%
+- `session_new` and `dispatch` (§27 FPs at rank 1 and 8) should drop — they are structurally similar to musl/zlib clean functions
+- `scar_alloc_copy` (§27 miss at rank 14) may rise — it has real memory sinks, no guard, closer to Juliet bad pattern
+- `handle_stats` correctly low — still no dangerous sink, model should abstain Every approach converges at the same ceiling: **~55–58% Devign accuracy**, against a majority-class baseline of 56.6% and a CodeBERT reference of 63.43%. Switching datasets (BigVul §21, PrimeVul §25), changing architecture (sink-node readout §23), fixing preprocessing (intrinsic-aware sinks §24), and adding semantic annotations (taint flags §22) all fail to improve the scarnet real-world benchmark beyond §12's 11/13.
 
 The 7pp gap to CodeBERT is real and has three distinct causes:
 

@@ -51,6 +51,7 @@ python scan_ir.py fn.ll --context        # include PDG slice vulnerability conte
 | `model_slice_pdg_v7.pt` | §27 | PDG slice, Juliet pretrain + Devign BCE fine-tune; multi-feature x(N,3) | 56.12% |
 | `model_slice_pdg_v8.pt` | §28 | PDG slice, Juliet pretrain + Devign RankNet fine-tune; pairwise ranking loss | TBD |
 | `model_juliet_pretrain.pt` | §29 | Juliet-only — no Devign fine-tune; pure structural prior (no training on commit history) | — |
+| `model_slice_pdg_v9.pt` | §30 | Juliet positives + clean real-C negatives (zlib/musl/SQLite); no Devign | — |
 
 `model_bigvul_cls.pt` and `model_bigvul_combined.pt` (§21) are trained on BigVul only
 and have no Devign score. See scarnet table below.
@@ -157,6 +158,7 @@ Training: Adam lr=1e-3, StepLR decay (γ=0.5, step=10), 30 epochs, hidden=64.
 | §27 | Juliet pretrain (99%+) → Devign BCE FT; multi-feature x(N,3) | 56.12% | **11/13** |
 | §28 | Juliet pretrain → Devign RankNet FT; pairwise ranking loss | 44.52% | 11/13 |
 | §29 | Juliet-only, no Devign FT — saturates (91–100% on everything) | — | 9/13† |
+| §30 | Juliet pos + clean real-C neg (zlib/musl/SQLite); no Devign | — | TBD |
 
 †High cross-run variance (~54–59%) at the ~1,250-sample split scale.
 
