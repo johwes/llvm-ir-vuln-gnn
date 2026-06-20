@@ -89,10 +89,13 @@ def philosophy2_score(summary: dict) -> float:
     if n_sinks == 0:
         base = 0.05
 
+    elif has_trunc and has_call_sink:
+        # Integer narrowing before a call-based size sink — suspicious regardless of guards.
+        # Guards elsewhere in the slice may protect pointer validity, not the truncated size.
+        base = 1.00 if not has_guard else 0.88
+
     elif not has_guard:
-        if has_trunc and has_call_sink:
-            base = 1.00   # integer narrowing into unguarded call — highest confidence
-        elif has_call_sink and has_arg_input:
+        if has_call_sink and has_arg_input:
             base = 0.90   # direct function argument to unguarded call sink
         elif has_call_sink:
             base = 0.70   # unguarded call sink, struct/return source — upstream validation possible
@@ -123,8 +126,7 @@ def philosophy2_score(summary: dict) -> float:
     mult = 1.0
     if is_ext:
         mult *= 1.10
-    if has_trunc and base < 1.0:   # trunc already baked into tier 1
-        mult *= 1.05
+    # trunc already baked into tier — no extra multiplier when it drove the base score
 
     return min(base * mult, 1.0)
 
