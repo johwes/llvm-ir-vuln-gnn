@@ -2865,35 +2865,42 @@ Juliet val accuracy reaches **99%+ by epoch 3** and holds. Expected: the structu
 
 ### Results
 
-| Metric | §12 (Devign only) | §27 (Juliet + Devign) |
+> **Note:** Results below were re-evaluated after fixing two eval bugs discovered in §31 analysis:
+> (1) eval_all_models.py was using `ir_to_graph_slice_pdg` (x shape N×1) instead of `ir_to_graph_slice_pdg_v7` (x shape N×3) for §27+, silently zeroing guard_class and is_external_input in every eval run; (2) `atoi`/`strtol` family missing from DANGEROUS_SINKS, causing `scar_atoi` to return no slice. All §27–§31 scarnet results prior to this fix were produced with scalar features disabled.
+
+| Metric | §12 (Devign only) | §27 (Juliet + Devign BCE) |
 |--------|-------------------|----------------------|
 | Devign test acc | 56.48% | 56.12% |
-| scarnet hits | **11/13** | **11/13** |
-| scarnet P@13 | **84.6%** | **84.6%** |
+| scarnet hits | **11/13** | 10/13 |
+| scarnet P@13 | **84.6%** | 76.9% |
 
-**scarnet ranking (§27):**
+**scarnet ranking (§27, corrected):**
 
 | Rank | Function | Score | Vuln? |
 |------|----------|-------|-------|
-| 1 | session_new | 80.9% | no |
-| 2 | handle_set | 67.4% | YES |
-| 3 | parse_msg_header | 66.9% | YES |
-| 4 | scar_atoi | 66.5% | YES |
-| 5 | session_frag | 62.3% | YES |
-| 6 | session_login | 61.0% | YES |
-| 7 | handle_client | 58.7% | YES |
-| 8 | dispatch | 55.9% | no |
-| 9 | session_consume_frag | 55.8% | YES |
-| 10 | parse_cmd | 53.2% | YES |
-| 11 | parse_batch | 53.2% | YES |
-| 12 | scar_log | 51.1% | YES |
-| 13 | handle_del | 50.2% | YES |
-| 14 | scar_alloc_copy | 47.2% | YES (miss) |
-| 16 | handle_stats | 44.5% | YES (miss) |
+| 1 | session_new | 65.0% | no ✗ (FP) |
+| 2 | session_frag | 64.0% | YES ✓ |
+| 3 | handle_set | 58.9% | YES ✓ |
+| 4 | session_login | 57.0% | YES ✓ |
+| 5 | parse_cmd | 55.9% | YES ✓ |
+| 6 | parse_msg_header | 54.4% | YES ✓ |
+| 7 | parse_batch | 53.8% | YES ✓ |
+| 8 | dispatch | 53.7% | no ✗ (FP) |
+| 9 | handle_auth | 50.4% | no ✗ (FP) |
+| 10 | scar_log | 50.3% | YES ✓ |
+| 11 | handle_del | 49.2% | YES ✓ |
+| 12 | handle_client | 49.2% | YES ✓ |
+| 13 | session_consume_frag | 48.1% | YES ✓ |
+| 14 | scar_alloc_copy | 47.5% | YES ✗ (miss) |
+| 15 | handle_get | 45.8% | no |
+| 16 | handle_stats | 45.7% | YES ✗ (miss) |
+| 17 | main | 41.2% | no |
+| 18 | session_free | 32.9% | no |
+| 19 | scar_atoi | 19.5% | YES ✗ (miss) |
 
-**Misses:** `scar_alloc_copy` (rank 14, has memory sinks — model under-scores) and `handle_stats` (rank 16, divide-by-zero with no memory sinks — structurally invisible to any sink-based model).
+**10/13 — regression from §12.** With guard features active, BCE fine-tune on Devign over-fits the Juliet structural prior to Devign-specific patterns, causing `scar_atoi` (rank 19, 19.5%) to drop — a CWE-190/191 integer conversion pattern. `atoi` was also missing from DANGEROUS_SINKS during Juliet preprocessing, so the model saw no atoi-pattern positives.
 
-**Conclusion:** Juliet pretraining achieves **parity with §12** — no regression, no improvement. The structural prior from NSA synthetic pairs transfers: a model trained on synthetic C then fine-tuned on FFmpeg/QEMU still ranks real server bugs at the same quality. This confirms §12's PDG slice captures the dominant structural discriminant, and that 11/13 is the current GNN ceiling for sink-based models on this target.
+**Conclusion:** With corrected eval, §27 BCE scores 10/13 — below §12. The BCE loss with guard features is less robust than the base §12 model for this target. §28 RankNet (below) recovers parity.
 
 ---
 
@@ -2927,35 +2934,39 @@ This is `P(v ranks above b)` maximisation — training objective now directly ma
 
 ### Results
 
-Devign test accuracy: **44.52%** — below §12 (56.48%) and §27 (56.12%), as expected for a ranking objective.
+> **Note:** Re-evaluated after fixing the eval preprocessor bug (see §27 note). Prior §28 results used x(N,1); results below use x(N,3) with guard and external_input features active.
 
-scarnet ranking: **11/13, 84.6% P@13** — parity with §12 and §27. Same two misses (`scar_alloc_copy` rank 14, `handle_stats` rank 17).
+Devign test accuracy: **44.52%** — below §12/§27, as expected for a ranking objective.
+
+scarnet ranking: **11/13, 84.6% P@13** — parity with §12, better than §27 BCE (10/13).
 
 | Rank | Function | Score | Vuln? |
 |------|----------|-------|-------|
-| 1 | session_new | 91.4% | no |
-| 2 | scar_atoi | 82.0% | YES |
-| 3 | handle_set | 78.7% | YES |
-| 4 | session_consume_frag | 78.4% | YES |
-| 5 | handle_client | 78.2% | YES |
-| 6 | session_frag | 77.7% | YES |
-| 7 | parse_msg_header | 76.6% | YES |
-| 8 | handle_del | 75.1% | YES |
-| 9 | session_login | 74.9% | YES |
-| 10 | dispatch | 74.6% | no |
-| 11 | parse_batch | 73.4% | YES |
-| 12 | parse_cmd | 71.6% | YES |
-| 13 | scar_log | 71.2% | YES |
-| 14 | scar_alloc_copy | 68.7% | YES (miss) |
-| 15 | session_free | 67.3% | no |
-| 16 | handle_get | 66.9% | no |
-| 17 | handle_stats | 66.5% | YES (miss) |
-| 18 | handle_auth | 63.1% | no |
-| 19 | main | 61.9% | no |
+| 1 | handle_client | 77.9% | YES ✓ |
+| 2 | session_new | 75.8% | no ✗ (FP) |
+| 3 | parse_batch | 74.8% | YES ✓ |
+| 4 | session_frag | 74.0% | YES ✓ |
+| 5 | session_consume_frag | 72.6% | YES ✓ |
+| 6 | scar_atoi | 71.1% | YES ✓ |
+| 7 | handle_set | 71.0% | YES ✓ |
+| 8 | parse_cmd | 70.5% | YES ✓ |
+| 9 | handle_del | 69.9% | YES ✓ |
+| 10 | scar_log | 69.3% | YES ✓ |
+| 11 | dispatch | 69.1% | no ✗ (FP) |
+| 12 | session_login | 69.0% | YES ✓ |
+| 13 | parse_msg_header | 68.4% | YES ✓ |
+| 14 | scar_alloc_copy | 68.3% | YES ✗ (miss) |
+| 15 | handle_stats | 68.0% | YES ✗ (miss) |
+| 16 | handle_get | 65.8% | no |
+| 17 | session_free | 63.7% | no |
+| 18 | handle_auth | 61.6% | no |
+| 19 | main | 60.0% | no |
 
-**Calibration regression:** RankNet compressed all scores into the 62–91% band. `main` scores 61.9% vs 39.2% in §27 — the model is less discriminating. The ordering is roughly preserved but the spread collapsed.
+**Calibration:** Scores compressed into a 60–78% band — less spread than §12 (38–74%) but the ranking is correct where it matters. `scar_atoi` at 71.1% is a key result: the model generalises to the integer conversion sink pattern even though `atoi` was missing from DANGEROUS_SINKS during Juliet training. RankNet's pairwise objective is more robust to missing sink coverage than BCE.
 
-**Conclusion:** RankNet achieves parity with §12/§27 on ranking quality but worse calibration. The 15% Devign label noise limits pairwise signal extraction just as it limits BCE — noisy pairs produce the same noise floor. Changing the loss objective alone does not break the ceiling. §27 remains the preferred checkpoint.
+**Misses:** `scar_alloc_copy` (rank 14, 68.3% — just below the boundary) and `handle_stats` (divide-by-zero, no dangerous sink — structurally invisible).
+
+**Conclusion:** RankNet with guard features recovers §12 parity (11/13) where BCE with guard features regresses (§27: 10/13). The ranking objective is more robust than BCE to the combination of Devign noise + expanded feature set. §28 is now co-best with §12. §32 (below) rebuilds Juliet with `atoi` as a sink and retrains RankNet — the path to 12/13.
 
 ---
 
@@ -2992,29 +3003,29 @@ python eval_all_models.py --scarnet --answer-key ~/Downloads/SCAR/scarnet-answer
 
 ### Results
 
-**Hypothesis falsified.** The Juliet-only model saturates on scarnet — scoring 91.7–100% on all 19 functions, including `handle_stats` (divide-by-zero, no dangerous sink) and `main`.
+**Hypothesis falsified.** The Juliet-only model saturates on scarnet — scoring 87–100% on all 19 functions, including `handle_stats` (divide-by-zero, no dangerous sink) and `main`. Confirmed with corrected preprocessor (x(N,3)).
 
 | Rank | Function | Score | Vuln? |
 |------|----------|-------|-------|
-| 1 | dispatch | 100.0% | no |
-| 2 | handle_set | 100.0% | YES |
-| 3 | handle_get | 100.0% | no |
-| 4 | handle_del | 100.0% | YES |
-| 5 | parse_cmd | 100.0% | YES |
-| 6 | session_login | 100.0% | YES |
-| 7 | session_frag | 100.0% | YES |
-| 8 | scar_atoi | 100.0% | YES |
-| 9 | handle_client | 100.0% | YES |
-| 10 | session_consume_frag | 100.0% | YES |
-| 11 | session_new | 100.0% | no |
-| 12 | parse_msg_header | 100.0% | YES |
-| 13 | handle_stats | 100.0% | YES |
-| 14 | main | 99.5% | no |
-| 15 | handle_auth | 98.8% | no |
-| 16 | parse_batch | 98.4% | YES |
-| 17 | scar_alloc_copy | 98.4% | YES |
-| 18 | session_free | 98.3% | no |
-| 19 | scar_log | 91.7% | YES |
+| 1 | handle_client | 100.0% | YES ✓ |
+| 2 | dispatch | 100.0% | no ✗ (FP) |
+| 3 | handle_set | 100.0% | YES ✓ |
+| 4 | handle_get | 100.0% | no ✗ (FP) |
+| 5 | session_login | 100.0% | YES ✓ |
+| 6 | handle_del | 100.0% | YES ✓ |
+| 7 | parse_cmd | 100.0% | YES ✓ |
+| 8 | session_frag | 100.0% | YES ✓ |
+| 9 | handle_stats | 100.0% | YES ✓ |
+| 10 | session_new | 99.9% | no ✗ (FP) |
+| 11 | parse_msg_header | 99.9% | YES ✓ |
+| 12 | session_consume_frag | 99.9% | YES ✓ |
+| 13 | handle_auth | 99.8% | no ✗ (FP) |
+| 14 | parse_batch | 99.5% | YES ✗ (miss) |
+| 15 | scar_alloc_copy | 99.4% | YES ✗ (miss) |
+| 16 | main | 98.4% | no |
+| 17 | session_free | 96.1% | no |
+| 18 | scar_atoi | 94.6% | YES ✗ (miss) |
+| 19 | scar_log | 87.0% | YES ✗ (miss) |
 
 P@13: 9/13 (69.2%) — worse than §12. The model fires at maximum confidence on everything.
 
@@ -3214,6 +3225,78 @@ python eval_all_models.py --scarnet \
 - `session_frag`, `session_consume_frag`, `scar_atoi`, `parse_batch` should recover from 0.0% to the 40–70% range — they are unguarded sinks, and libcurl's clean sinks look different from them
 - `session_new` should remain a FP or drop — it is genuinely structurally complex
 - `handle_del` should remain near 99% — the clear-sink pattern is unchanged
+
+### Results
+
+**8/13 (61.5%) — further regression from §30 (9/13).** Opposite failure mode from §30.
+
+| Rank | Function | Score | Vuln? |
+|------|----------|-------|-------|
+| 1 | handle_auth | 100.0% | no ✗ (FP) |
+| 2 | session_login | 99.9% | YES ✓ |
+| 3 | handle_client | 97.4% | YES ✓ |
+| 4 | handle_del | 90.2% | YES ✓ |
+| 5 | session_new | 78.0% | no ✗ (FP) |
+| 6 | scar_log | 74.8% | YES ✓ |
+| 7 | handle_set | 31.2% | YES ✓ |
+| 8 | handle_get | 29.8% | no ✗ (FP) |
+| 9 | parse_cmd | 6.8% | YES ✓ |
+| 10 | dispatch | 5.3% | no ✗ (FP) |
+| 11 | parse_msg_header | 3.2% | YES ✓ |
+| 12 | parse_batch | 0.1% | YES ✓ |
+| 13 | main | 0.0% | no |
+| 14 | handle_stats | 0.0% | YES ✗ (miss) |
+| 15 | session_free | 0.0% | no |
+| 16 | scar_alloc_copy | 0.0% | YES ✗ (miss) |
+| 17 | scar_atoi | 0.0% | YES ✗ (miss) |
+| 18 | session_consume_frag | 0.0% | YES ✗ (miss) |
+| 19 | session_frag | 0.0% | YES ✗ (miss) |
+
+**Why §31 failed (opposite direction from §30):** libcurl is structurally TOO similar to Juliet bad patterns. libcurl's `lib/*.c` functions contain `memcpy`, `malloc`, pointer arithmetic, and complex network control flow — labelled `y=0` — but these patterns look like Juliet bad functions to the RGCN. The model resolved contradictory signal ("network/buffer C = 1 from Juliet" vs "network/buffer C = 0 from libcurl") by scoring all ambiguous functions high (90–100%) and everything else near 0%. `session_frag`, `session_consume_frag`, `scar_atoi`, `scar_alloc_copy` all fell below the decision boundary.
+
+**The clean-negatives hypothesis is exhausted.** Two experiments, two opposite failure modes:
+- §30 (lua): negatives too structurally distant → model suppresses server-C as "interpreter-like = clean"
+- §31 (libcurl): negatives too structurally similar → model saturates server-C as "network-like = Juliet bad"
+
+No curated open-source corpus sits cleanly in the target domain with confirmed-clean labels. The fundamental issue is that any corpus labelled "definitely clean" is a biased sample — it either lacks the structural diversity of real vulnerability patterns or overlaps with them. Devign's noise is less damaging than this bias because Devign at least samples the joint distribution of safe and unsafe server C from the same structural domain.
+
+**§32** (below) returns to the Devign-based approach with the correct preprocessor and atoi in DANGEROUS_SINKS — the path to 12/13.
+
+## §32 — Juliet Pretrain + Devign RankNet, with atoi sinks + correct eval preprocessor
+
+**Scripts:** `preprocess_juliet.py` (rebuild) + `train_slice_pdg_v8.py` (retrain Phase 2)
+**Architecture:** SlicePDGGNN_v7 — identical to §27/§28
+
+### Motivation
+
+The eval bug analysis (§27 note) revealed that all §27–§31 Juliet training data was built with `atoi`/`strtol` missing from DANGEROUS_SINKS. `scar_atoi` — a known-vulnerable function — had no slice built during Juliet preprocessing, so the model never saw CWE-190/191 integer conversion patterns as positives.
+
+§28 (RankNet) scored `scar_atoi` at 71.1% despite this gap — the model generalised from other sink patterns. §32 explicitly includes integer conversion functions as sinks in Juliet training data, then retrains Phase 2 with RankNet. If `scar_atoi` moves from 71.1% to 80%+ and `scar_alloc_copy` (rank 14, 68.3% in §28) rises past the boundary, we reach 12/13.
+
+**What changes vs §28:**
+- Rebuild `train_juliet_graphs.pkl` / `valid_juliet_graphs.pkl` after adding `atoi`/`atol`/`atoll`/`strtol`/`strtoul` to DANGEROUS_SINKS in `preprocess_juliet.py` (already done)
+- Retrain Phase 2 only (`--finetune-only`) using the existing `model_juliet_pretrain.pt`
+- Output: `model_slice_pdg_v11.pt`
+
+### Commands
+
+```bash
+# Step 1: rebuild Juliet graphs with atoi/strtol sinks
+# (model_juliet_pretrain.pt can be reused — Phase 1 is opcode-only, unaffected)
+python preprocess_juliet.py --workers 8
+
+# Step 2: retrain Phase 2 only (RankNet, reuses pretrain ckpt)
+python train_slice_pdg_v8.py --finetune-only --checkpoint model_slice_pdg_v11.pt
+
+# Step 3: evaluate
+python eval_all_models.py --scarnet \
+    --answer-key ~/Downloads/SCAR/scarnet-answer-key.txt
+```
+
+**What to look for vs §28:**
+- `scar_atoi` (71.1% at rank 6 in §28) should rise — now explicitly in positive training set
+- `scar_alloc_copy` (68.3% at rank 14 in §28, just below boundary) may cross into top 13
+- `handle_stats` (divide-by-zero, no dangerous sink) should remain low — correctly abstaining
 
 ### Results
 

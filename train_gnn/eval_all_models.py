@@ -387,6 +387,13 @@ REGISTRY = [
         "preprocess": _pp_slice_pdg_v7,
         "load_model": _load_pdg_v7,
     },
+    {
+        "checkpoint": "model_slice_pdg_v11.pt",
+        "label":      "§32  Juliet pretrain (atoi sinks) + Devign RankNet FT",
+        "devign":     "—",
+        "preprocess": _pp_slice_pdg_v7,
+        "load_model": _load_pdg_v7,
+    },
 ]
 
 

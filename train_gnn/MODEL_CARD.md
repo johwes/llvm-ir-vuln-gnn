@@ -21,9 +21,9 @@ vulnerability triage pipelines.
 
 ## Recommended model
 
-**`model_slice_pdg.pt`** (§12 PDG slice GNN) — best real-world recall across all 27
-experiments. Ranks 11 of 13 known-vulnerable scarnet functions in the top 13 of 19
-(84.6% recall@13). Devign test accuracy: 56.48%.
+**`model_slice_pdg.pt`** (§12 PDG slice GNN) and **`model_slice_pdg_v8.pt`** (§28 RankNet) — co-best.
+Both rank 11 of 13 known-vulnerable scarnet functions in the top 13 of 19 (84.6% P@13).
+§28 is preferred when ranking quality matters more than calibration; §12 has better score spread.
 
 ```bash
 python scan_ir.py fn.ll --all-functions --threshold 0.5
@@ -53,6 +53,7 @@ python scan_ir.py fn.ll --context        # include PDG slice vulnerability conte
 | `model_juliet_pretrain.pt` | §29 | Juliet-only — no Devign fine-tune; pure structural prior (no training on commit history) | — |
 | `model_slice_pdg_v9.pt` | §30 | Juliet positives + clean real-C negatives (zlib/musl/lua/lz4/cjson/libuv); no Devign | — |
 | `model_slice_pdg_v10.pt` | §31 | Juliet positives + domain-matched clean negatives (libcurl replaces lua); no Devign | — |
+| `model_slice_pdg_v11.pt` | §32 | Juliet pretrain (with atoi sinks) + Devign RankNet FT; correct eval preprocessor | — |
 
 `model_bigvul_cls.pt` and `model_bigvul_combined.pt` (§21) are trained on BigVul only
 and have no Devign score. See scarnet table below.
@@ -77,18 +78,21 @@ checkpoints at top-13-of-19:
 | model_slice_pdg_v3.pt | §23 PDG sink-node readout | 55.40% | 9/13 | 69.2% | 69.2% |
 | model_slice_pdg_v4.pt | §24 PDG + intrinsic-aware sinks | 55.00% | 10/13 | 76.9% | 76.9% |
 | model_slice_pdg_v5.pt | §25 PDG slice (PrimeVul training) | 55.56% | 9/13 | 69.2% | 69.2% |
-| model_slice_pdg_v7.pt | §27 Juliet pretrain + Devign BCE FT | 56.12% | **11/13** | **84.6%** | **84.6%** |
-| model_slice_pdg_v8.pt | §28 Juliet pretrain + Devign RankNet | 44.52% | 11/13 | 84.6% | 84.6% |
+| model_slice_pdg_v7.pt | §27 Juliet pretrain + Devign BCE FT | 56.12% | 10/13§ | 76.9% | 76.9% |
+| **model_slice_pdg_v8.pt** | **§28 Juliet pretrain + Devign RankNet** | 44.52% | **11/13** | **84.6%** | **84.6%** |
 | model_juliet_pretrain.pt | §29 Juliet-only, no Devign FT | — | 9/13† | 69.2% | 69.2% |
-| model_slice_pdg_v9.pt | §30 Juliet + clean real-C neg (no lua=server bias) | — | 9/13‡ | 69.2% | 69.2% |
+| model_slice_pdg_v9.pt | §30 Juliet + clean real-C neg (lua domain shift) | — | 9/13‡ | 69.2% | 69.2% |
+| model_slice_pdg_v10.pt | §31 Juliet + libcurl neg (libcurl too similar to Juliet bad) | — | 8/13‡ | 61.5% | 61.5% |
 | model_bigvul_cls.pt | §21 BigVul classifier | — | 9/13 | 69.2% | 69.2% |
 | model_bigvul_combined.pt | §21 BigVul+Devign combined | — | 9/13 | 69.2% | 69.2% |
 | ENSEMBLE (max) | all models | — | 9/13 | 69.2% | 69.2% |
 | ENSEMBLE (mean) | all models | — | 9/13 | 69.2% | 69.2% |
 
-†§29 saturates: scores 91.7–100% on all 19 functions including benign ones — no discrimination possible. Devign fine-tune provides necessary calibration; Juliet-only model has no reference for what real production C looks like.
+§All §27–§31 results were initially collected with a preprocessor bug: `ir_to_graph_slice_pdg` (x shape N×1) was used instead of `ir_to_graph_slice_pdg_v7` (x shape N×3), silently zeroing guard_class and is_external_input in all eval runs. Additionally `atoi`/`strtol` family was missing from DANGEROUS_SINKS. Results above reflect corrected evaluation. §27 BCE regressed from reported 11/13 to 10/13 once guard features are active; §28 RankNet held at 11/13.
 
-‡§30 collapses to bimodal scoring: only `handle_del` (99.3%) and `session_new` (95.0%) score meaningfully; all other functions fall below 20%. Root cause: lua dominated negatives (61% of corpus), teaching the model "interpreter/library C = clean" — server-style vulnerable functions (`session_frag`, `session_consume_frag`, `scar_atoi`, `parse_batch`) were suppressed as matching the lua domain. §31 replaces lua with libcurl (domain-matched server/network C).
+†§29 saturates: scores 87–100% on all 19 functions including benign ones — no discrimination possible. Confirmed with corrected preprocessor. Devign fine-tune provides necessary calibration; Juliet-only model has no reference for what real production C looks like.
+
+‡§30 and §31 both failed but for opposite reasons. §30 (lua): negatives too structurally distant, model suppresses server-C as "interpreter-like = clean" (9/13). §31 (libcurl): negatives too structurally similar to Juliet bad, model saturates server-C as "network-like = vulnerable" (8/13). Clean-negatives approach exhausted — no curated open-source corpus sits in the correct structural domain with confirmed-clean labels.
 
 **§12 is the uniquely best checkpoint.** Every other model and the full ensemble top out
 at 10/13. The ensemble scoring 9/13 — worse than the best individual model — indicates
@@ -159,11 +163,12 @@ Training: Adam lr=1e-3, StepLR decay (γ=0.5, step=10), 30 epochs, hidden=64.
 | §24 | PDG + intrinsic-aware sinks (retrain) | 55.00% | 10/13 |
 | §25 | PDG slice trained on PrimeVul | 55.56% | 9/13 |
 | §26 | Joern PrimeVul — dropped (IKOS pipeline conflict) | — | — |
-| §27 | Juliet pretrain (99%+) → Devign BCE FT; multi-feature x(N,3) | 56.12% | **11/13** |
-| §28 | Juliet pretrain → Devign RankNet FT; pairwise ranking loss | 44.52% | 11/13 |
-| §29 | Juliet-only, no Devign FT — saturates (91–100% on everything) | — | 9/13† |
+| §27 | Juliet pretrain (99%+) → Devign BCE FT; multi-feature x(N,3) | 56.12% | 10/13§ |
+| **§28** | **Juliet pretrain → Devign RankNet FT; pairwise ranking loss** | 44.52% | **11/13** |
+| §29 | Juliet-only, no Devign FT — saturates (87–100% on everything) | — | 9/13† |
 | §30 | Juliet pos + clean real-C neg (zlib/musl/lua/lz4/cjson/libuv); no Devign | — | 9/13‡ |
-| §31 | Juliet pos + domain-matched neg (libcurl replaces lua); no Devign | — | TBD |
+| §31 | Juliet pos + domain-matched neg (libcurl); libcurl too similar to Juliet bad | — | 8/13‡ |
+| §32 | Juliet pretrain (atoi sinks) → Devign RankNet FT; correct preprocessor | — | TBD |
 
 †High cross-run variance (~54–59%) at the ~1,250-sample split scale.
 
