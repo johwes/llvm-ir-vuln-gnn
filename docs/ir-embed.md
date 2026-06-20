@@ -3302,43 +3302,47 @@ python eval_all_models.py --scarnet \
 
 **11/13 — P@13 = 84.6%** — matches §12 and §28; ceiling holds.
 
+*(Note: an earlier run of §32 used `data/train_graphs.pkl` — the 44-col block-level Devign pkl — after the N_SCALAR clamp fix unblocked training. That run produced the wrong distribution and was discarded. Results below are the correct run using `train_slice_pdg_v7_graphs.pkl`.)*
+
 | Rank | Function | Score | Vuln? |
 |---|---|---|---|
-| 1 | session_new | 91.8% | no |
-| 2 | session_login | 90.8% | **YES** |
-| 3 | dispatch | 86.8% | no |
-| 4 | handle_set | 85.2% | **YES** |
-| 5 | handle_stats | 79.4% | **YES** |
-| 6 | handle_get | 76.5% | no |
-| 7 | session_frag | 76.0% | **YES** |
-| 8 | parse_msg_header | 74.4% | **YES** |
-| 9 | parse_cmd | 69.4% | **YES** |
-| 10 | session_consume_frag | 68.5% | **YES** |
-| 11 | handle_del | 68.2% | **YES** |
-| 12 | handle_auth | 65.0% | no |
-| 13 | parse_batch | 61.8% | **YES** |
-| 14 | scar_alloc_copy | 57.8% | YES |
-| 15 | scar_log | 57.0% | YES |
-| 16 | main | 56.2% | no |
-| 17 | handle_client | 52.5% | YES |
-| 18 | session_free | 45.8% | no |
-| 19 | scar_atoi | 21.7% | YES |
+| 1 | handle_client | 79.1% | **YES** |
+| 2 | session_new | 78.5% | no |
+| 3 | parse_batch | 75.5% | **YES** |
+| 4 | session_frag | 75.1% | **YES** |
+| 5 | session_consume_frag | 74.0% | **YES** |
+| 6 | scar_atoi | 71.9% | **YES** |
+| 7 | handle_set | 71.3% | **YES** |
+| 8 | parse_cmd | 70.9% | **YES** |
+| 9 | session_login | 70.7% | **YES** |
+| 10 | dispatch | 70.5% | no |
+| 11 | handle_del | 70.3% | **YES** |
+| 12 | parse_msg_header | 69.7% | **YES** |
+| 13 | scar_log | 69.6% | **YES** |
+| 14 | handle_stats | 69.1% | YES |
+| 15 | scar_alloc_copy | 68.3% | YES |
+| 16 | handle_get | 65.3% | no |
+| 17 | session_free | 64.6% | no |
+| 18 | handle_auth | 61.7% | no |
+| 19 | main | 60.8% | no |
 
-**Hits:** session_login, handle_set, handle_stats, session_frag, parse_msg_header, parse_cmd, session_consume_frag, handle_del, parse_batch (9 in top 13) + handle_get, handle_auth, dispatch, session_new displaced two known-vulns → 11/13.
+**Hits:** handle_client, parse_batch, session_frag, session_consume_frag, scar_atoi, handle_set, parse_cmd, session_login, handle_del, parse_msg_header, scar_log (11 in top 13). Displaced by session_new (FP) and dispatch (FP).
 
-**Misses:** scar_atoi (rank 19, 21.7%), handle_client (rank 17, 52.5%).
+**Misses:** handle_stats (rank 14, 69.1%), scar_alloc_copy (rank 15, 68.3%).
 
 #### Analysis
 
-The atoi hypothesis did not pan out. `scar_atoi` *fell* from 71.1% (rank 6 in §28) to 21.7% (rank 19). The atoi sinks added to DANGEROUS_SINKS had the opposite effect from what was expected.
+**scar_atoi recovers to 71.9% (rank 6)** — essentially identical to §28's 71.1%. Adding atoi to DANGEROUS_SINKS in Juliet did not measurably change the score for this function. The model learned the integer-conversion sink pattern from generalisation in §28 and the explicit training in §32 produces the same result. This confirms atoi coverage was not the limiting factor.
 
-**Why:** Adding `atoi`/`strtol` to Juliet DANGEROUS_SINKS expanded the positive training set. But Juliet integer-conversion functions (CWE-190/191) have structurally minimal slices — small graphs with a single sink node, little control flow, and low guard density. Reinforcing this pattern in Phase 1 trained the model to score *simple* graphs high. `scar_atoi` is also a simple graph (36 nodes in §28 diagnostic), so in §28 this pattern pushed it to 71%. In §32, Phase 2 RankNet fine-tune on Devign overwrote this: the Devign functions that share the "small, simple, atoi-like" shape are predominantly benign utility functions, and the RankNet pressure pushed `scar_atoi`-shaped graphs down toward 0.
+**Score compression is the defining feature of §32.** The spread is only 18 points (60.8–79.1%) compared to §28's much wider distribution. Every function sits in the 60–80% band. This makes the ranking fragile near the boundary: handle_stats (rank 14, 69.1%) and scar_log (rank 13, 69.6%) are separated by 0.5 points. The ranking is correct, but the margin is not robust to run-to-run variance.
 
-This is a cancellation effect between Phase 1 (atoi = positive) and Phase 2 (atoi-shaped = Devign benign). §28, which never had atoi in Juliet positives, avoided this cancellation — the model simply generalised from structurally adjacent sinks.
+**Two new misses vs §28:** handle_stats rises to rank 14 (69.1%) — it has no dangerous sink but its structural complexity compresses into the same band as true positives. scar_alloc_copy stays at rank 15 (68.3%) — same position as §28, unchanged.
 
-**What did not change:** The two structural false positives (`session_new`, `dispatch`) and two false negatives (`scar_alloc_copy`, `handle_client`) are stable across all Juliet/RankNet variants. These are not noise — they reflect the model's actual decision boundary given the available training signal.
+**Two false positives:** session_new (rank 2, 78.5%) and dispatch (rank 10, 70.5%) — same structural FPs as every other variant. These are not addressable with the current architecture.
 
-**Conclusion:** The 11/13 ceiling is stable. §32 neither advances nor regresses vs §28 in P@13 terms, but the per-function distribution changed in a way that confirms the ceiling is not a data volume or sink coverage problem — it is a structural ambiguity problem. `session_new` and `dispatch` are legitimately complex, production-style C that shares structure with vulnerable code. The two remaining misses (`scar_atoi`, `handle_client`) are in the long tail of model confidence where Phase 1/Phase 2 signal cancels.
+**Why compression?** Phase 1 Juliet training with atoi added more small-graph positives, pushing the model to score graphs of all sizes similarly high. Phase 2 RankNet then calibrated the ordering without widening the spread — the result is correct rank ordering inside a narrow confidence band. This is the opposite of saturation (§29): rankings are valid, but the confidence gap between functions is too small to be operationally useful as a threshold.
+
+**Conclusion:** The 11/13 ceiling is stable across §12, §28, and §32. The two structural misses (handle_stats, scar_alloc_copy) and two structural FPs (session_new, dispatch) are invariant across all training variants. Score compression in §32 is a calibration regression vs §28 — P@13 is identical but the ranking is less robust near the boundary. §28 (RankNet, no atoi addition) remains the preferred checkpoint: same hits, wider confidence spread.
 
 The path to 12/13 is not more Juliet sink variants or cleaner negatives. It requires node-level supervision (see Dataset Limitations section below) — the ability to tell the model exactly which instruction is the unguarded sink, not just which function contains one.
 

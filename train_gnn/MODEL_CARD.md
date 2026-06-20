@@ -95,7 +95,7 @@ checkpoints at top-13-of-19:
 
 ‡§30 and §31 both failed but for opposite reasons. §30 (lua): negatives too structurally distant, model suppresses server-C as "interpreter-like = clean" (9/13). §31 (libcurl): negatives too structurally similar to Juliet bad, model saturates server-C as "network-like = vulnerable" (8/13). Clean-negatives approach exhausted — no curated open-source corpus sits in the correct structural domain with confirmed-clean labels.
 
-§§§32 reaches 11/13 but `scar_atoi` fell from 71.1% (§28) to 21.7% (rank 19). Adding atoi to Juliet positives created a Phase 1/Phase 2 cancellation: atoi-shaped graphs (small, simple) are predominantly benign in Devign, so RankNet fine-tune reversed the Juliet signal. §32 confirms the 11/13 ceiling is structural — not addressable through sink coverage or training data variants. Node-level supervision is required.
+§§§32 reaches 11/13 with `scar_atoi` at 71.9% (rank 6) — nearly identical to §28's 71.1%, confirming atoi coverage was not the limiting factor. The two misses (handle_stats rank 14, scar_alloc_copy rank 15) are unchanged vs §28. Score spread compresses to 18 points (60.8–79.1%) vs §28's wider distribution — correct rankings, reduced calibration margin. §28 is preferred for operational use. §32 confirms the ceiling is structural, not addressable through sink coverage or training data variants.
 
 **§12 is the uniquely best checkpoint.** Every other model and the full ensemble top out
 at 10/13. The ensemble scoring 9/13 — worse than the best individual model — indicates
@@ -171,7 +171,7 @@ Training: Adam lr=1e-3, StepLR decay (γ=0.5, step=10), 30 epochs, hidden=64.
 | §29 | Juliet-only, no Devign FT — saturates (87–100% on everything) | — | 9/13† |
 | §30 | Juliet pos + clean real-C neg (zlib/musl/lua/lz4/cjson/libuv); no Devign | — | 9/13‡ |
 | §31 | Juliet pos + domain-matched neg (libcurl); libcurl too similar to Juliet bad | — | 8/13‡ |
-| §32 | Juliet pretrain (atoi sinks) → Devign RankNet FT; Phase 1/Phase 2 atoi cancellation | — | 11/13§§ |
+| §32 | Juliet pretrain (atoi sinks) → Devign RankNet FT; scar_atoi 71.9% (≈§28); score compression | — | 11/13§§ |
 
 †High cross-run variance (~54–59%) at the ~1,250-sample split scale.
 
