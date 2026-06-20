@@ -56,35 +56,74 @@ _SCARNET_REPO = "https://github.com/johwes/scarnet.git"
 # Scoring rule
 # ---------------------------------------------------------------------------
 
+# Sink types that are IR instructions rather than function calls.
+# GEP / alloca unguarded in an internal helper often means the guard was
+# done by the caller (intra-procedural blind spot) — score them lower.
+_GEP_SINKS = frozenset({"getelementptr", "alloca"})
+
+
 def philosophy2_score(summary: dict) -> float:
-    """Pure structural Philosophy 2 score from a slice_context summary."""
+    """Pure structural Philosophy 2 score from a slice_context summary.
+
+    Tier system (descending priority):
+      1.00  trunc + call sink + no guard  — integer narrowing into unguarded call
+      0.90  call sink + no guard + function_argument input  — direct arg to unguarded call
+      0.75  call sink + null_check only  — null guard doesn't protect buffer writes
+      0.70  call sink + no guard, struct/return source  — upstream validation possible
+      0.55  GEP only + no guard  — likely struct field pattern, not a buffer call
+      0.40–0.70  call sink + bounds_check  — guard density logic
+      0.18–0.40  GEP only + guarded  — well-covered array access
+      0.05  no sink
+    """
     n_sinks    = summary["n_sinks"]
     has_guard  = summary["has_guard"]
     guard_type = summary.get("guard_type", "none")
     is_ext     = summary.get("is_external_input", False)
     has_trunc  = summary.get("has_trunc", False)
+    sinks      = summary.get("sinks", [])
+    channels   = summary.get("input_channels", [])
+
+    has_call_sink = any(s.get("fn") not in _GEP_SINKS for s in sinks)
+    has_arg_input = "function_argument" in channels
 
     if n_sinks == 0:
         base = 0.05
+
     elif not has_guard:
-        base = 1.00
+        if has_trunc and has_call_sink:
+            base = 1.00   # integer narrowing into unguarded call — highest confidence
+        elif has_call_sink and has_arg_input:
+            base = 0.90   # direct function argument to unguarded call sink
+        elif has_call_sink:
+            base = 0.70   # unguarded call sink, struct/return source — upstream validation possible
+        else:
+            base = 0.55   # GEP-only unguarded — likely struct field access pattern
+
     elif guard_type == "null_check":
-        base = 0.75   # null check doesn't protect buffer writes
+        if has_call_sink:
+            base = 0.75   # null check doesn't protect buffer writes
+        else:
+            base = 0.30   # null-check + GEP — standard pointer guard, not a buffer sink
+
     else:
+        # bounds_check or mixed
         gd = summary.get("guard_density", 1.0)
         if gd == float("inf"):
             base = 1.00
-        elif gd >= 5:
-            base = 0.70
-        elif gd >= 2:
-            base = 0.55
+        elif has_call_sink:
+            if gd >= 5:   base = 0.70
+            elif gd >= 2: base = 0.55
+            else:         base = 0.40
         else:
-            base = 0.40
+            # GEP with bounds check — well-covered array indexing
+            if gd >= 5:   base = 0.40
+            elif gd >= 2: base = 0.28
+            else:         base = 0.18
 
     mult = 1.0
     if is_ext:
         mult *= 1.10
-    if has_trunc:
+    if has_trunc and base < 1.0:   # trunc already baked into tier 1
         mult *= 1.05
 
     return min(base * mult, 1.0)
