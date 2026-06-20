@@ -65,24 +65,33 @@ SOURCES = {
         "dir":  SRC / "musl",
         "glob": "src/**/*.c",
     },
-    "sqlite": {
-        # Amalgamation is too large for compile_to_ir — use individual source files
+    "lua": {
+        # ~30 self-contained .c files at repo root, pure C, minimal deps
         "type": "git",
-        "url":  "https://github.com/sqlite/sqlite.git",
-        "dir":  SRC / "sqlite",
+        "url":  "https://github.com/lua/lua.git",
+        "dir":  SRC / "lua",
+        "glob": "*.c",
+    },
+    "libuv": {
+        # Node.js async I/O library — sockets, buffers, handles; closest in
+        # structure to scarnet server functions (parse, session, dispatch)
+        "type": "git",
+        "url":  "https://github.com/libuv/libuv.git",
+        "dir":  SRC / "libuv",
         "glob": "src/*.c",
     },
-    "libexpat": {
+    "cjson": {
+        # Single-file JSON parser — clean application-level C
         "type": "git",
-        "url":  "https://github.com/libexpat/libexpat.git",
-        "dir":  SRC / "libexpat",
-        "glob": "expat/lib/*.c",
+        "url":  "https://github.com/DaveGamble/cJSON.git",
+        "dir":  SRC / "cjson",
+        "glob": "*.c",
     },
     "lz4": {
         "type": "git",
         "url":  "https://github.com/lz4/lz4.git",
         "dir":  SRC / "lz4",
-        "glob": "lib/*.c",
+        "glob": "**/*.c",   # catch lib/ and top-level
     },
 }
 
@@ -219,7 +228,7 @@ def main() -> None:
     ap.add_argument("--skip-clone",  action="store_true",
                     help="Skip git clone / download (sources already present)")
     ap.add_argument("--sources",     type=str,
-                    default="zlib,musl,sqlite,libexpat,lz4",
+                    default="zlib,musl,lua,libuv,cjson,lz4",
                     help="Comma-separated sources to use")
     args = ap.parse_args()
 
