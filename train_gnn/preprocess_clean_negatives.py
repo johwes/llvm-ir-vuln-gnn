@@ -172,12 +172,17 @@ def process_c_file(args: tuple[str, Path]) -> list[dict]:
     except Exception:
         return []
 
-    # Strip local #include "..." lines — same technique as preprocess_juliet.py.
-    # Project headers (lua.h, uv.h, lz4.h, etc.) are not on the system path;
-    # compile_to_ir()'s iterative stub injector handles any remaining unknowns.
-    src_text = _LOCAL_INCLUDE_RE.sub("", src_text)
+    # Strategy: try with -I <source_dir> first so headers next to the .c file
+    # are found naturally (zlib, libuv, cjson all keep headers alongside src).
+    # If that fails, strip local #include "..." and retry — same technique as
+    # preprocess_juliet.py for projects with no self-contained header layout.
+    source_dir = str(c_path.parent)
+    extra_flags = [f"-I{source_dir}"]
 
-    ir = compile_to_ir(src_text)
+    ir = compile_to_ir(src_text, extra_cflags=extra_flags)
+    if ir is None:
+        stripped = _LOCAL_INCLUDE_RE.sub("", src_text)
+        ir = compile_to_ir(stripped, extra_cflags=extra_flags)
     if ir is None:
         return []
 
@@ -195,11 +200,6 @@ def process_c_file(args: tuple[str, Path]) -> list[dict]:
         fn_name = fn.name
         if fn_name.startswith("__"):
             continue  # skip internal/compiler-generated stubs
-
-        # Build the per-function IR module (same pattern as eval_all_models.py)
-        fn_ir = f"target datalayout = \"\"\ntarget triple = \"x86_64-pc-linux-gnu\"\n\n"
-        fn_ir += f"; Function from {source_name}/{c_path.name}\n"
-        fn_ir += str(fn) + "\n"
 
         g = ir_to_graph_slice_pdg_v7(ir, fn_name=fn_name)
         if g is None:

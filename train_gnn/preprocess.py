@@ -322,7 +322,8 @@ def download_devign():
 # Step 2 — Compile C function to LLVM IR (with automatic stub injection)
 # ---------------------------------------------------------------------------
 
-def _try_compile(full_source: str) -> tuple[str | None, str]:
+def _try_compile(full_source: str,
+                 extra_cflags: list[str] | None = None) -> tuple[str | None, str]:
     """Single compilation attempt. Returns (ir_text_or_None, stderr)."""
     src_path = ir_path = None
     try:
@@ -334,6 +335,7 @@ def _try_compile(full_source: str) -> tuple[str | None, str]:
             ["clang", "-O0", "-S", "-emit-llvm",
              "-Wno-everything", "-ferror-limit=0",
              *_PROJECT_CFLAGS,              # -I flags for non-std install paths
+             *(extra_cflags or []),         # caller-supplied -I flags
              "-o", str(ir_path), str(src_path)],
             capture_output=True, timeout=15,
         )
@@ -440,7 +442,8 @@ def _strip_asm_blocks(src: str) -> str:
 
 
 def compile_to_ir(func_source: str, max_retries: int = 20,
-                  _failure_capture: list | None = None) -> str | None:
+                  _failure_capture: list | None = None,
+                  extra_cflags: list[str] | None = None) -> str | None:
     """
     Compile one C function string to LLVM IR.
 
@@ -475,7 +478,7 @@ def compile_to_ir(func_source: str, max_retries: int = 20,
     macro_counter = 1   # unique values for #define case-label constants
     _last_stderr = ""
     for _ in range(max_retries):
-        ir, stderr = _try_compile(preamble + "\n" + func_source)
+        ir, stderr = _try_compile(preamble + "\n" + func_source, extra_cflags)
         if ir is not None:
             return ir
         _last_stderr = stderr
