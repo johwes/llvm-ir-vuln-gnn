@@ -35,8 +35,6 @@ import pickle
 import subprocess
 import sys
 import tempfile
-import urllib.request
-import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -68,10 +66,23 @@ SOURCES = {
         "glob": "src/**/*.c",
     },
     "sqlite": {
-        "type": "url",
-        "url":  "https://sqlite.org/2024/sqlite-amalgamation-3450100.zip",
+        # Amalgamation is too large for compile_to_ir — use individual source files
+        "type": "git",
+        "url":  "https://github.com/sqlite/sqlite.git",
         "dir":  SRC / "sqlite",
-        "glob": "*.c",
+        "glob": "src/*.c",
+    },
+    "libexpat": {
+        "type": "git",
+        "url":  "https://github.com/libexpat/libexpat.git",
+        "dir":  SRC / "libexpat",
+        "glob": "expat/lib/*.c",
+    },
+    "lz4": {
+        "type": "git",
+        "url":  "https://github.com/lz4/lz4.git",
+        "dir":  SRC / "lz4",
+        "glob": "lib/*.c",
     },
 }
 
@@ -80,7 +91,8 @@ MUSL_INCLUDE_DIRS = {
     "src/string", "src/stdlib", "src/stdio", "src/malloc",
     "src/math", "src/ctype", "src/network", "src/time",
     "src/unistd", "src/stat", "src/dirent", "src/fcntl",
-    "src/internal",
+    "src/internal", "src/env", "src/mman", "src/prng",
+    "src/regex", "src/search", "src/temp", "src/passwd",
 }
 
 
@@ -96,30 +108,6 @@ def _clone_git(url: str, dest: Path) -> None:
     )
 
 
-def _download_sqlite(url: str, dest: Path) -> None:
-    if dest.exists() and any(dest.glob("*.c")):
-        print(f"  sqlite: already extracted, skipping.")
-        return
-    dest.mkdir(parents=True, exist_ok=True)
-    zip_path = DATA / "sqlite_amalg.zip"
-    if not zip_path.exists():
-        print(f"  Downloading SQLite amalgamation ...")
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; clean-neg/1.0)"},
-        )
-        with urllib.request.urlopen(req) as resp, open(zip_path, "wb") as fh:
-            fh.write(resp.read())
-    print(f"  Extracting SQLite ...")
-    with zipfile.ZipFile(zip_path) as zf:
-        for member in zf.namelist():
-            if member.endswith(".c") or member.endswith(".h"):
-                # strip the top-level directory from the zip path
-                fname = Path(member).name
-                with zf.open(member) as src, open(dest / fname, "wb") as dst:
-                    dst.write(src.read())
-
-
 def acquire_sources(skip_clone: bool) -> None:
     if skip_clone:
         print("  --skip-clone: assuming sources already present.")
@@ -127,10 +115,7 @@ def acquire_sources(skip_clone: bool) -> None:
     SRC.mkdir(parents=True, exist_ok=True)
     for name, cfg in SOURCES.items():
         print(f"\n-- {name} --")
-        if cfg["type"] == "git":
-            _clone_git(cfg["url"], cfg["dir"])
-        else:
-            _download_sqlite(cfg["url"], cfg["dir"])
+        _clone_git(cfg["url"], cfg["dir"])
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +218,9 @@ def main() -> None:
                     help="Limit total files per source (smoke test)")
     ap.add_argument("--skip-clone",  action="store_true",
                     help="Skip git clone / download (sources already present)")
-    ap.add_argument("--sources",     type=str,  default="zlib,musl,sqlite",
-                    help="Comma-separated sources to use (default: all three)")
+    ap.add_argument("--sources",     type=str,
+                    default="zlib,musl,sqlite,libexpat,lz4",
+                    help="Comma-separated sources to use")
     args = ap.parse_args()
 
     import random

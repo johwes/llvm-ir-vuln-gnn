@@ -20,3 +20,4 @@ train_gnn/data/*.zip
 train_gnn/data/clean_src/
 train_gnn/data/juliet_src/
 train_gnn/data/juliet_support/
+train_gnn/data/sqlite_amalg.zip
